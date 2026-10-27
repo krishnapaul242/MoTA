@@ -25,7 +25,7 @@ To build an installable extension:
 
 ```
 npm run package
-code --install-extension mota-android-0.2.2.vsix
+code --install-extension mota-android-0.2.3.vsix
 ```
 
 ## Pair and connect
@@ -62,7 +62,7 @@ Implementation references: [ADB guide](https://developer.android.com/tools/adb),
 
 ### Current validation status
 
-Full TypeScript compilation and all 23 tests pass. No physical-device smoke test has been performed.
+Full TypeScript compilation and all 32 tests pass. No physical-device smoke test has been performed.
 
 ## Remembered connections
 
@@ -75,3 +75,18 @@ The install page includes **Update existing app · keep data** and **Switch debu
 When an install fails, each affected device offers relevant actions: **Replace existing app & retry**, **Allow downgrade & retry**, **Allow test APK & retry**, or **Uninstall conflicting app & reinstall**. Successful devices are left alone during targeted retries. **Choose another APK** opens a new installation flow.
 
 **Clean reinstall on selected devices** is also available before an install. MoTA reads the application ID with SDK build tools (`aapt` / `aapt2`) when available. Otherwise, enter and verify the package ID; a signature failure can supply the conflicting package ID. A confirmation page lists the exact package and devices and requires acknowledgement of data deletion. It then runs uninstall followed by install. Clean uninstall applies to all Android users on the targeted device and deletes local app data; selecting an install user does not narrow uninstall scope. Cancellation makes no device changes. Uninstall failure stops that device before installation; if installation fails after removal, the old app stays removed. MoTA never automatically uninstalls just because installation failed.
+
+## Launch apps and control the device screen
+
+Use the **play** icon in the Devices header to select devices and launch an installed app by package ID. Each device also has a launch action, and successful install cards offer **Launch app** or **Launch on installed devices**. The last package ID is remembered per workspace. MoTA resolves the MAIN/LAUNCHER activity and uses Android's activity manager to open it. Install-page launch uses the selected install user; an empty or `all` user launches the current user. Standalone launch uses the current Android user. Apps without an enabled launcher activity report an error per device.
+
+The **dashboard** icon in the Devices header opens the multi-device monitor directly.
+
+Use the **lightbulb** icon or **MoTA: Device Keep Awake** for:
+
+- **Keep awake while charging**: prevent normal sleep while USB, AC or wireless charging is connected.
+- **Keep awake on battery**: set a one-hour screen inactivity timeout and wake the screen once.
+- **Wake screen now**: send a single wake request, without unlocking the phone.
+- **Restore previous sleep setting**: restore the charging and timeout settings saved before MoTA changed them.
+
+Sleep settings remain active after VS Code closes until restored; the one-hour option is an inactivity timeout, not an automatic restoration timer. Restore using the same device connection identity. Repeated enables preserve the original values. Android device policies can limit screen behavior. Each device reports its own result.

@@ -4,7 +4,7 @@ const Module = require('node:module');
 const vm = require('node:vm');
 const {Adb} = require('../out/adb');
 function harness() {
- const registered=new Map(),panels=[],quick=[],inputs=[],global=new Map(),workspace=new Map(),calls=[];
+ const registered=new Map(),panels=[],quick=[],inputs=[],global=new Map(),workspace=new Map(),calls=[],deviceSettings=new Map();
  const context={subscriptions:[],globalState:{get:(k,d)=>global.has(k)?global.get(k):d,update:async(k,v)=>global.set(k,v)},workspaceState:{get:(k,d)=>workspace.has(k)?workspace.get(k):d,update:async(k,v)=>workspace.set(k,v)}};
  const disposable=()=>({dispose(){}});
  const uri={fsPath:'/project/app.apk',path:'/project/app.apk'};
@@ -24,9 +24,9 @@ function harness() {
  const {activate}=require('../out/extension');Module._load=oldLoad;
  Adb.prototype.devices=async()=>[{serial:'one',state:'device',model:'Pixel'},{serial:'two',state:'device',model:'Samsung'}];
  let failSecond=true;
- Adb.prototype.run=async function(args){calls.push(args);if(args.includes('install')) {if(args[1]==='two'&&failSecond)throw new Error(failureText);return 'Success';}if(args.includes('uninstall')) {if(uninstallFailure)throw new Error('DELETE_FAILED_DEVICE_POLICY_MANAGER');return 'Success';}if(args[0]==='connect')return args[1].includes('bad')?'failed to connect':'connected to '+args[1];if(args.includes('getprop'))return '14';if(args.includes('battery'))return 'level: 80\nscale: 100';if(args.includes('cpuinfo'))return '12% TOTAL';if(args.includes('/proc/meminfo'))return 'MemTotal: 8388608 kB\nMemAvailable: 4194304 kB';return '';};
+ Adb.prototype.run=async function(args){calls.push(args);if(args.includes('install')) {if(args[1]==='two'&&failSecond)throw new Error(failureText);return 'Success';}if(args.includes('uninstall')) {if(uninstallFailure)throw new Error('DELETE_FAILED_DEVICE_POLICY_MANAGER');return 'Success';}if(args[0]==='connect')return args[1].includes('bad')?'failed to connect':'connected to '+args[1];if(args[3]==='settings') {const key=args[1]+':'+args[5]+':'+args[6];if(args[4]==='put'){deviceSettings.set(key,args[7]);return '';}return deviceSettings.get(key) ?? (args[5]==='global'?'2':'30000');}if(args.includes('resolve-activity'))return args.at(-1)+'/.MainActivity';if(args[3]==='am')return 'Status: ok';if(args.includes('getprop'))return '14';if(args.includes('battery'))return 'level: 80\nscale: 100';if(args.includes('cpuinfo'))return '12% TOTAL';if(args.includes('/proc/meminfo'))return 'MemTotal: 8388608 kB\nMemAvailable: 4194304 kB';return '';};
  activate(context);
- return {registered,panels,quick,inputs,global,workspace,calls,uri,setFailure:text=>{failureText=text;},setMetadata:pkg=>{detectedId=pkg;},failUninstall:()=>{uninstallFailure=true;},success:()=>{failSecond=false;},cleanup:()=>{context.subscriptions.forEach(s=>s.dispose());Adb.prototype.run=oldRun;Adb.prototype.devices=oldDevices;}};
+ return {registered,panels,quick,inputs,global,workspace,calls,deviceSettings,uri,setFailure:text=>{failureText=text;},setMetadata:pkg=>{detectedId=pkg;},failUninstall:()=>{uninstallFailure=true;},success:()=>{failSecond=false;},cleanup:()=>{context.subscriptions.forEach(s=>s.dispose());Adb.prototype.run=oldRun;Adb.prototype.devices=oldDevices;}};
 }
 const tick=()=>new Promise(r=>setTimeout(r,10));
 test('install page retains success and retries only failed targets with revised flags',async()=>{
@@ -105,4 +105,26 @@ test('already-installed recovery enables replace on only the failed target',asyn
  await panel.receive({action:'retry-replace',index:1,options:{...installOptions,replace:false}});
  assert.ok(h.calls.filter(a=>a.includes('install')).at(-1).includes('-r'));assert.equal(h.calls.filter(a=>a.includes('uninstall')).length,0);
  }finally{h.cleanup();}
+});
+
+test('keep awake preserves original settings across repeated enables and restores them',async()=>{
+ const h=harness();const item={device:{serial:'one',state:'device',model:'Pixel'}};try{
+ for(const value of ['on','on','battery','battery','restore']){h.quick.push({value});await h.registered.get('mota.awake')(item);}
+ assert.equal(h.deviceSettings.get('one:global:stay_on_while_plugged_in'),'2');
+ assert.equal(h.deviceSettings.get('one:system:screen_off_timeout'),'30000');
+ assert.equal(h.global.get('awake.one'),undefined);assert.equal(h.global.get('sleep.one'),undefined);
+ assert.match(h.panels.at(-1).webview.html,/Previous sleep setting restored/);
+ }finally{h.cleanup();}
+});
+test('launch controls appear after install and launch only successful devices',async()=>{
+ const h=harness();try{
+ h.setMetadata('com.example.app');h.quick.push(items=>items,{value:'page'});await h.registered.get('mota.install')();const panel=h.panels.at(-1);
+ await panel.receive({action:'install',options:installOptions});assert.match(panel.webview.html,/Launch on installed devices/);
+ await panel.receive({action:'launch-installed',package:'com.example.app'});
+ const launches=h.calls.filter(a=>a[3]==='am');assert.equal(launches.length,1);assert.equal(launches[0][1],'one');
+ assert.match(panel.webview.html,/com.example.app launched/);
+ }finally{h.cleanup();}
+});
+test('standalone launch remembers app ID and targets selected devices',async()=>{
+ const h=harness();try{h.quick.push(items=>items);h.inputs.push('com.example.app');await h.registered.get('mota.launch')();assert.equal(h.workspace.get('launchPackage'),'com.example.app');assert.equal(h.calls.filter(a=>a[3]==='am').length,2);}finally{h.cleanup();}
 });

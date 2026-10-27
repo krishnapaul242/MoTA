@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { detectApkPackage, validPackage, packageFromFailure, isInstallConflict } from './apk';
 import { ChildProcess } from 'node:child_process';
 import { Adb, Device, escapeHtml as html, parseServices, validAddress } from './adb';
+import { launchApp, setStayAwake, setScreenTimeout } from './deviceActions';
 import { page, actionScript } from './ui';
 import { parseMetrics, installArgs, InstallOptions, recoveryHint } from './metrics';
 
@@ -83,6 +84,59 @@ export function activate(context: vscode.ExtensionContext) {
   }
   context.subscriptions.push(devices, apks, vscode.window.registerTreeDataProvider('mota.devices', devices), vscode.window.registerTreeDataProvider('mota.apks', apks));
   command('mota.refresh', refresh);
+  async function deviceResults(title: string, targets: Device[], action: (d: Device) => Promise<string>) {
+    if (!targets.length) return;
+    const panel = vscode.window.createWebviewPanel('mota.actions',`MoTA · ${title}`,vscode.ViewColumn.One,{enableScripts:true});
+    let disposed = false;
+    panel.onDidDispose(() => {disposed = true;});
+    const rows = targets.map(d => ({d,ok:false,detail:'Working…'}));
+    const render = () => {if (!disposed) panel.webview.html = page(`<header><h1>${html(title)}</h1></header><div class="grid">${rows.map(r => `<section class="card"><h2>${html(r.d.model)}</h2><small>${html(r.d.serial)}</small><p class="${r.ok ? 'success' : r.detail === 'Working…' ? 'muted' : 'error'}">${html(r.detail)}</p></section>`).join('')}</div>`);};
+    render();
+    await Promise.all(rows.map(async r => {try {r.detail = await action(r.d);r.ok = true;}catch(e){r.detail = e instanceof Error ? e.message : String(e);}render();}));
+  }
+  command('mota.launch', async (item?: Tree) => {
+    const targets = await choose(item);
+    if (!targets.length) return;
+    const pkg = await vscode.window.showInputBox({title:'Launch app on selected devices',value:context.workspaceState.get('launchPackage',''),placeHolder:'com.example.app',validateInput:v => validPackage(v) ? undefined : 'Enter the installed app package ID'});
+    if (pkg === undefined) return;
+    if (!validPackage(pkg)) throw new Error('Enter a valid app package ID.');
+    await context.workspaceState.update('launchPackage',pkg);
+    await deviceResults('Launch app',targets,d => launchApp(adb,d.serial,pkg));
+  });
+  command('mota.awake', async (item?: Tree) => {
+    const targets = await choose(item);
+    if (!targets.length) return;
+    const mode = await vscode.window.showQuickPick([{label:'Keep awake while charging',description:'USB, AC or wireless charging; setting stays active until restored',value:'on'},{label:'Keep awake on battery · 1-hour screen timeout',description:'Extend inactivity timeout; restore it when you finish',value:'battery'},{label:'Restore previous sleep setting',description:'Restore the value saved before MoTA enabled keep-awake',value:'restore'},{label:'Wake screen now',description:'Wake the screen once, including when on battery',value:'wake'}],{title:'Device screen · keep awake'});
+    if (!mode) return;
+    await deviceResults('Device screen',targets,async d => {
+      if (mode.value === 'wake') {const result = await adb.shell(d.serial,['input','keyevent','KEYCODE_WAKEUP']);if (/error|exception|permission denial/i.test(result)) throw new Error(result);return 'Wake request sent. Unlock the device if needed.';}
+      const key = `awake.${encodeURIComponent(d.serial)}`;
+      const timeoutKey = `sleep.${encodeURIComponent(d.serial)}`;
+      if (mode.value === 'battery') {
+        const original = (await adb.shell(d.serial,['settings','get','system','screen_off_timeout'])).trim();
+        if (!/^\d+$/.test(original) || +original > 2147483647) throw new Error('Unable to read the current screen timeout. No setting was changed.');
+        if (context.globalState.get<number>(timeoutKey) === undefined) await context.globalState.update(timeoutKey,+original);
+        await setScreenTimeout(adb,d.serial,3600000);
+        await adb.shell(d.serial,['input','keyevent','KEYCODE_WAKEUP']);
+        return 'Screen inactivity timeout set to one hour, including on battery. Device policy may limit this. Use Restore previous sleep setting when finished.';
+      }
+      if (mode.value === 'on') {
+        const original = (await adb.shell(d.serial,['settings','get','global','stay_on_while_plugged_in'])).trim();
+        if (!/^\d+$/.test(original) || +original > 15) throw new Error('Unable to read the current sleep setting. No setting was changed.');
+        if (context.globalState.get<number>(key) === undefined) await context.globalState.update(key,+original);
+        await setStayAwake(adb,d.serial,7);
+        await adb.shell(d.serial,['input','keyevent','KEYCODE_WAKEUP']);
+        return 'Keep-awake enabled while charging. On battery, normal sleep rules apply. Use Restore previous sleep setting to undo.';
+      }
+      const previous = context.globalState.get<number>(key);
+      const previousTimeout = context.globalState.get<number>(timeoutKey);
+      if (previous === undefined && previousTimeout === undefined) return 'No previous MoTA sleep setting was saved for this connection. Nothing changed.';
+      if (previous !== undefined) {await setStayAwake(adb,d.serial,previous);await context.globalState.update(key,undefined);}
+      if (previousTimeout !== undefined) {await setScreenTimeout(adb,d.serial,previousTimeout);await context.globalState.update(timeoutKey,undefined);}
+      return 'Previous sleep setting restored.';
+    });
+  });
+
   command('mota.forget', async () => {
     const choice = await vscode.window.showQuickPick(['Forget saved addresses and device history','Cancel'],{title:'Clear MoTA connection history'});
     if (choice?.startsWith('Forget')) { for (const key of ['addresses','knownDevices','selectedDevices']) await context.globalState.update(key,[]); await refresh(); }
@@ -145,7 +199,7 @@ export function activate(context: vscode.ExtensionContext) {
     let disposed = false, running = false;
     let confirmation: {indices:number[];pkg:string} | undefined;
     panel.onDidDispose(() => {disposed = true;});
-    const statuses = targets.map(d => ({device:d,state:'Ready',detail:''}));
+    const statuses = targets.map(d => ({device:d,state:'Ready',detail:'',launchDetail:''}));
     const button = (action: string,label: string,index?: number) => `<button class="secondary" data-action="${action}" ${index === undefined ? '' : `data-index="${index}"`} ${running || confirmation ? 'disabled' : ''}>${label}</button>`;
     const render = () => {
       if (disposed) return;
@@ -155,8 +209,8 @@ export function activate(context: vscode.ExtensionContext) {
       ${([['replace','Replace existing app · keep data'],['test','Allow test APK'],['downgrade','Allow downgrade · debuggable apps'],['grant','Grant runtime permissions']] as const).map(([key,label]) => `<label><input type="checkbox" id="${key}" ${options[key] ? 'checked' : ''} ${running || confirmation ? 'disabled' : ''}>${label}</label>`).join('')}
       <label>App package <input id="package" value="${html(packageName)}" placeholder="com.example.app" ${running || confirmation || detectedPackage ? 'disabled' : ''}></label><small>${detectedPackage ? 'Read from selected APK.' : 'Needed for clean replacement. Verify it matches the selected APK; SDK build tools can detect this automatically.'}</small>
       <label>Android user <input id="user" value="${html(options.user)}" placeholder="Default / current / all / user ID" ${running || confirmation ? 'disabled' : ''}></label><label>Timeout (seconds) <input id="timeout" type="number" min="10" max="600" value="${options.timeout}" ${running || confirmation ? 'disabled' : ''}></label>
-      <div class="actions"><button data-action="install" ${running || confirmation || statuses.every(s => s.state === 'Installed') ? 'disabled' : ''}>${running ? 'Working…' : statuses.every(s => s.state === 'Installed') ? 'Installed successfully' : statuses.some(s => s.state === 'Failed') ? 'Retry failed devices' : 'Install on devices'}</button>${button('clean','Clean reinstall on selected devices')}${button('choose-apk','Choose another APK')}${button('connect','Reconnect')}${button('settings','ADB settings')}</div><p id="validation" class="error" role="alert"></p></section>
-      <section><h2>Device activity</h2>${statuses.map((s,i) => `<article class="card"><div class="row"><strong>${html(s.device.model)}</strong><span class="badge">${html(s.state)}</span></div><small>${html(s.device.serial)}</small>${['Installing','Uninstalling'].includes(s.state) ? '<progress aria-label="Working"></progress>' : ''}${s.detail ? `<p class="${s.state === 'Failed' ? 'error' : 'success'}">${html(s.state === 'Failed' ? recoveryHint(s.detail) : s.detail)}</p>${s.state === 'Failed' ? `<div class="actions">${/ALREADY_EXISTS/.test(s.detail) ? button('retry-replace','Replace existing app & retry',i) : ''}${/VERSION_DOWNGRADE/.test(s.detail) ? button('retry-downgrade','Allow downgrade & retry',i) : ''}${/TEST_ONLY/.test(s.detail) ? button('retry-test','Allow test APK & retry',i) : ''}${isInstallConflict(s.detail) ? button('clean-one','Uninstall conflicting app & reinstall',i) : ''}</div><details><summary>Failure details</summary><pre>${html(s.detail)}</pre></details>` : ''}` : ''}</article>`).join('')}</section></div>`, `
+      <div class="actions"><button data-action="install" ${running || confirmation || statuses.every(s => s.state === 'Installed') ? 'disabled' : ''}>${running ? 'Working…' : statuses.every(s => s.state === 'Installed') ? 'Installed successfully' : statuses.some(s => s.state === 'Failed') ? 'Retry failed devices' : 'Install on devices'}</button>${statuses.some(s => s.state === 'Installed') ? button('launch-installed','Launch on installed devices') : ''}${button('clean','Clean reinstall on selected devices')}${button('choose-apk','Choose another APK')}${button('connect','Reconnect')}${button('settings','ADB settings')}</div><p id="validation" class="error" role="alert"></p></section>
+      <section><h2>Device activity</h2>${statuses.map((s,i) => `<article class="card"><div class="row"><strong>${html(s.device.model)}</strong><span class="badge">${html(s.state)}</span></div><small>${html(s.device.serial)}</small>${s.state === 'Installed' ? `<div class="actions">${button('launch-one','Launch app',i)}</div>` : ''}${s.launchDetail ? `<p>${html(s.launchDetail)}</p>` : ''}${['Installing','Uninstalling'].includes(s.state) ? '<progress aria-label="Working"></progress>' : ''}${s.detail ? `<p class="${s.state === 'Failed' ? 'error' : 'success'}">${html(s.state === 'Failed' ? recoveryHint(s.detail) : s.detail)}</p>${s.state === 'Failed' ? `<div class="actions">${/ALREADY_EXISTS/.test(s.detail) ? button('retry-replace','Replace existing app & retry',i) : ''}${/VERSION_DOWNGRADE/.test(s.detail) ? button('retry-downgrade','Allow downgrade & retry',i) : ''}${/TEST_ONLY/.test(s.detail) ? button('retry-test','Allow test APK & retry',i) : ''}${isInstallConflict(s.detail) ? button('clean-one','Uninstall conflicting app & reinstall',i) : ''}</div><details><summary>Failure details</summary><pre>${html(s.detail)}</pre></details>` : ''}` : ''}</article>`).join('')}</section></div>`, `
       document.getElementById('preset').addEventListener('change',e=>{const value=e.target.value;if(value==='custom')return;document.getElementById('replace').checked=true;document.getElementById('test').checked=value==='switch';document.getElementById('downgrade').checked=value==='switch';});
       document.addEventListener('click',e=>{const b=e.target.closest('button[data-action]');if(!b)return;api.postMessage({action:b.dataset.action,index:b.dataset.index===undefined?undefined:Number(b.dataset.index),confirmed:document.getElementById('confirm-loss')?.checked===true,package:document.getElementById('package').value.trim(),options:{replace:document.getElementById('replace').checked,test:document.getElementById('test').checked,downgrade:document.getElementById('downgrade').checked,grant:document.getElementById('grant').checked,user:document.getElementById('user').value.trim(),timeout:Number(document.getElementById('timeout').value)}});});window.addEventListener('message',e=>{if(e.data.error)document.getElementById('validation').textContent=e.data.error;});`);
     };
@@ -193,6 +247,22 @@ export function activate(context: vscode.ExtensionContext) {
           await run(confirmed.indices,confirmed.pkg);return;
         }
         if (confirmation) return;
+        if (m?.action === 'launch-one' || m?.action === 'launch-installed') {
+          const pkg = detectedPackage || (typeof m.package === 'string' ? m.package.trim() : packageName);
+          if (!validPackage(pkg)) throw new Error('Enter the installed app package ID before launching.');
+          const individual = m.action === 'launch-one';
+          if (individual && (!Number.isInteger(m.index) || m.index < 0 || m.index >= statuses.length || statuses[m.index].state !== 'Installed')) throw new Error('Choose a successfully installed device.');
+          const selected = individual ? [statuses[m.index]] : statuses.filter(s => s.state === 'Installed');
+          if (!selected.length) return;
+          const user = options.user === 'all' || !options.user ? 'current' : options.user;
+          packageName = pkg;running = true;render();
+          try {
+            await context.workspaceState.update('launchPackage',pkg);
+            await Promise.all(selected.map(async s => {try {s.launchDetail = await launchApp(adb,s.device.serial,pkg,user);}catch(e){s.launchDetail = `Launch failed: ${e instanceof Error ? e.message : String(e)}`;}}));
+          } finally {running = false;render();}
+          return;
+        }
+
         if (['install','clean','clean-one','retry-replace','retry-downgrade','retry-test'].includes(m?.action) && m.options) {
           options = {replace:m.options.replace === true,test:m.options.test === true,downgrade:m.options.downgrade === true,grant:m.options.grant === true,user:String(m.options.user ?? ''),timeout:Number(m.options.timeout)};
           installArgs(targets[0].serial,uri.fsPath,options);

@@ -2,7 +2,7 @@
   "name": "mota-android",
   "displayName": "MoTA Android",
   "description": "Android devices, wireless QR pairing, APK installs, logcat and live stats.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "mota-local",
   "engines": {
     "vscode": "^1.95.0"
@@ -80,6 +80,18 @@
       {
         "command": "mota.forget",
         "title": "MoTA: Forget Connection History"
+      },
+      {
+        "command": "mota.launch",
+        "title": "MoTA: Launch App",
+        "shortTitle": "Launch app",
+        "icon": "$(play)"
+      },
+      {
+        "command": "mota.awake",
+        "title": "MoTA: Device Keep Awake",
+        "shortTitle": "Keep awake",
+        "icon": "$(lightbulb)"
       }
     ],
     "views": {
@@ -110,6 +122,21 @@
           "command": "mota.connect",
           "when": "view == mota.devices",
           "group": "navigation"
+        },
+        {
+          "command": "mota.stats",
+          "when": "view == mota.devices",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mota.launch",
+          "when": "view == mota.devices",
+          "group": "navigation@2"
+        },
+        {
+          "command": "mota.awake",
+          "when": "view == mota.devices",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -126,6 +153,15 @@
           "command": "mota.install",
           "when": "view == mota.apks",
           "group": "inline"
+        },
+        {
+          "command": "mota.launch",
+          "when": "view == mota.devices && viewItem == device",
+          "group": "inline@1"
+        },
+        {
+          "command": "mota.awake",
+          "when": "view == mota.devices && viewItem == device"
         }
       ]
     },
