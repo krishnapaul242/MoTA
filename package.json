@@ -1,0 +1,134 @@
+{
+  "name": "mota-android",
+  "displayName": "MoTA Android",
+  "description": "Android devices, wireless QR pairing, APK installs, logcat and live stats.",
+  "version": "0.1.0",
+  "publisher": "mota-local",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "test": "npm run compile && node --test test/*.test.js",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.7.0"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "mota.pair",
+        "title": "MoTA: Pair Device with QR"
+      },
+      {
+        "command": "mota.connect",
+        "title": "MoTA: Connect by Address"
+      },
+      {
+        "command": "mota.refresh",
+        "title": "MoTA: Refresh"
+      },
+      {
+        "command": "mota.install",
+        "title": "MoTA: Install APK on Devices"
+      },
+      {
+        "command": "mota.logcat",
+        "title": "MoTA: Start Logcat"
+      },
+      {
+        "command": "mota.stopLogs",
+        "title": "MoTA: Stop All Logcat Streams"
+      },
+      {
+        "command": "mota.stats",
+        "title": "MoTA: Device Info and Live Stats"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "mota.devices",
+          "name": "MoTA \u00b7 Devices"
+        },
+        {
+          "id": "mota.apks",
+          "name": "MoTA \u00b7 APKs"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "mota.pair",
+          "when": "view == mota.devices",
+          "group": "navigation"
+        },
+        {
+          "command": "mota.refresh",
+          "when": "view == mota.devices || view == mota.apks",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "mota.logcat",
+          "when": "view == mota.devices && viewItem == device",
+          "group": "inline"
+        },
+        {
+          "command": "mota.stats",
+          "when": "view == mota.devices && viewItem == device"
+        },
+        {
+          "command": "mota.install",
+          "when": "view == mota.apks",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MoTA Android",
+      "properties": {
+        "mota.adbPath": {
+          "type": "string",
+          "default": "adb",
+          "description": "ADB executable path. Uses Android SDK environment variables when available."
+        },
+        "mota.apkGlob": {
+          "type": "string",
+          "default": "**/*.apk",
+          "description": "Workspace APK search pattern; Gradle build folders are included."
+        },
+        "mota.refreshSeconds": {
+          "type": "number",
+          "default": 5,
+          "minimum": 2,
+          "description": "Device list refresh interval."
+        }
+      }
+    }
+  },
+  "license": "MIT"
+}
