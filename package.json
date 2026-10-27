@@ -2,7 +2,7 @@
   "name": "mota-android",
   "displayName": "MoTA Android",
   "description": "Android devices, wireless QR pairing, APK installs, logcat and live stats.",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "publisher": "mota-local",
   "engines": {
     "vscode": "^1.95.0"
@@ -39,23 +39,33 @@
     "commands": [
       {
         "command": "mota.pair",
-        "title": "MoTA: Pair Device with QR"
+        "title": "MoTA: Pair Device with QR",
+        "icon": "$(device-camera)",
+        "shortTitle": "Pair with QR"
       },
       {
         "command": "mota.connect",
-        "title": "MoTA: Connect by Address"
+        "title": "MoTA: Connect by Address",
+        "icon": "$(plug)",
+        "shortTitle": "Connect"
       },
       {
         "command": "mota.refresh",
-        "title": "MoTA: Refresh"
+        "title": "MoTA: Refresh",
+        "icon": "$(refresh)",
+        "shortTitle": "Refresh"
       },
       {
         "command": "mota.install",
-        "title": "MoTA: Install APK on Devices"
+        "title": "MoTA: Install APK on Devices",
+        "icon": "$(desktop-download)",
+        "shortTitle": "Install APK"
       },
       {
         "command": "mota.logcat",
-        "title": "MoTA: Start Logcat"
+        "title": "MoTA: Start Logcat",
+        "icon": "$(output)",
+        "shortTitle": "Logcat"
       },
       {
         "command": "mota.stopLogs",
@@ -63,18 +73,24 @@
       },
       {
         "command": "mota.stats",
-        "title": "MoTA: Device Info and Live Stats"
+        "title": "MoTA: Device Info and Live Stats",
+        "icon": "$(dashboard)",
+        "shortTitle": "Device monitor"
+      },
+      {
+        "command": "mota.forget",
+        "title": "MoTA: Forget Connection History"
       }
     ],
     "views": {
       "explorer": [
         {
           "id": "mota.devices",
-          "name": "MoTA \u00b7 Devices"
+          "name": "Devices"
         },
         {
           "id": "mota.apks",
-          "name": "MoTA \u00b7 APKs"
+          "name": "APKs"
         }
       ]
     },
@@ -88,6 +104,11 @@
         {
           "command": "mota.refresh",
           "when": "view == mota.devices || view == mota.apks",
+          "group": "navigation"
+        },
+        {
+          "command": "mota.connect",
+          "when": "view == mota.devices",
           "group": "navigation"
         }
       ],
