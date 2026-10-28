@@ -4,3 +4,6 @@ test/**
 tsconfig.json
 node_modules/typescript/**
 node_modules/@types/**
+
+helper-apk/**
+.mota/**

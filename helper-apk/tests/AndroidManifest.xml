@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.mota.recorder.tests">
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="35" />
+    <application android:label="MoTA recorder tests" android:debuggable="true" />
+    <instrumentation android:name="dev.mota.recorder.SmokeTest" android:targetPackage="dev.mota.recorder" android:functionalTest="true" />
+    <instrumentation android:name="dev.mota.recorder.VideoTest" android:targetPackage="dev.mota.recorder" android:functionalTest="true" />
+</manifest>

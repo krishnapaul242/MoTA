@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_description">Records and replays gestures you explicitly start. The touch overlay captures gestures and sends them to the app after finger-up. Can capture screenshots and insert text using the Text control. All sessions stay on this device until you export them. Stop at any time using the floating controls.</string>
+</resources>

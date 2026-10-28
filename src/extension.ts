@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { detectApkPackage, validPackage, packageFromFailure, isInstallConflict } from './apk';
 import { ChildProcess } from 'node:child_process';
 import { Adb, Device, escapeHtml as html, parseServices, validAddress } from './adb';
+import { registerRecordings } from './recordingsView';
 import { launchApp, setStayAwake, setScreenTimeout } from './deviceActions';
 import { page, actionScript } from './ui';
 import { parseMetrics, installArgs, InstallOptions, recoveryHint } from './metrics';
@@ -83,6 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(name, async (...args) => { try { await action(...args); } catch(e) { failure(e,() => action(...args)); } }));
   }
   context.subscriptions.push(devices, apks, vscode.window.registerTreeDataProvider('mota.devices', devices), vscode.window.registerTreeDataProvider('mota.apks', apks));
+  registerRecordings(vscode, context, adb, choose);
   command('mota.refresh', refresh);
   async function deviceResults(title: string, targets: Device[], action: (d: Device) => Promise<string>) {
     if (!targets.length) return;

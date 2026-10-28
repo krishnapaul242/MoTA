@@ -2,7 +2,7 @@
   "name": "mota-android",
   "displayName": "MoTA Android",
   "description": "Android devices, wireless QR pairing, APK installs, logcat and live stats.",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "publisher": "mota-local",
   "engines": {
     "vscode": "^1.95.0"
@@ -26,7 +26,8 @@
     "package": "vsce package --allow-missing-repository"
   },
   "dependencies": {
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -92,6 +93,17 @@
         "title": "MoTA: Device Keep Awake",
         "shortTitle": "Keep awake",
         "icon": "$(lightbulb)"
+      },
+      {
+        "command": "mota.recordings",
+        "title": "MoTA: Recordings",
+        "icon": "$(record)",
+        "shortTitle": "Recordings"
+      },
+      {
+        "command": "mota.setupRecorder",
+        "title": "MoTA: Set Up Recorder Helper",
+        "shortTitle": "Set up recorder helper"
       }
     ],
     "views": {
@@ -137,6 +149,11 @@
           "command": "mota.awake",
           "when": "view == mota.devices",
           "group": "navigation@3"
+        },
+        {
+          "command": "mota.recordings",
+          "when": "view == mota.devices",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -162,6 +179,14 @@
         {
           "command": "mota.awake",
           "when": "view == mota.devices && viewItem == device"
+        },
+        {
+          "command": "mota.recordings",
+          "when": "view == mota.devices && viewItem == device"
+        },
+        {
+          "command": "mota.setupRecorder",
+          "when": "view == mota.devices && viewItem == device"
         }
       ]
     },
@@ -183,6 +208,11 @@
           "default": 5,
           "minimum": 2,
           "description": "Device list refresh interval."
+        },
+        "mota.recordingsDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute recording directory. Empty uses .mota/recordings in the first workspace folder, or extension storage without a workspace."
         }
       }
     }
