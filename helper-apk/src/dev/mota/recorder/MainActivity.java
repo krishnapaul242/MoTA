@@ -15,7 +15,7 @@ public class MainActivity extends Activity {
     boolean cancelledCapture;
     LinearLayout content,sessions;
     TextView serviceState,chosen;
-    boolean remotePassive;
+    boolean remotePassive;String remoteOwner="";
     File selected,exporting;
     CheckBox video;
     static final int CAPTURE=10,EXPORT=11;
@@ -61,7 +61,7 @@ public class MainActivity extends Activity {
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra("mota.remoteVideo",false))remoteVideo(intent);}
     @Override protected void onDestroy(){if(visible==this)visible=null;super.onDestroy();}
     void cancelRemoteVideo(){cancelledCapture=true;remotePassive=false;finishActivity(CAPTURE);}
-    void remoteVideo(Intent intent){remotePassive="adb".equals(intent.getStringExtra("mota.remoteMode"));video.setChecked(true);newRecording();}
+    void remoteVideo(Intent intent){remoteOwner=intent.getStringExtra("mota.remoteOwner");remotePassive="adb".equals(intent.getStringExtra("mota.remoteMode"));video.setChecked(true);newRecording();}
     TextView label(String text,int size,int color){TextView t=new TextView(this);t.setText(text);t.setTextSize(size);t.setTextColor(color);t.setPadding(0,dp(8),0,dp(8));content.addView(t);return t;}
     void button(String text,Runnable run){Button b=new Button(this);b.setText(text);b.setAllCaps(false);content.addView(b,new LinearLayout.LayoutParams(-1,dp(52)));b.setOnClickListener(v->run.run());}
     RecorderService service(){RecorderService s=RecorderService.live;if(s==null)Toast.makeText(this,"Enable MoTA Recorder accessibility first",Toast.LENGTH_LONG).show();return s;}
@@ -96,7 +96,7 @@ public class MainActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent intent){
         super.onActivityResult(request,result,intent);
         if(request==CAPTURE&&result!=RESULT_OK)remotePassive=false;
-        if(request==CAPTURE&&!cancelledCapture&&result==RESULT_OK&&intent!=null){RecorderService s=service();if(s!=null){s.showControls(null);s.startVideoSession(result,intent,remotePassive);remotePassive=false;moveTaskToBack(true);}}
+        if(request==CAPTURE&&!cancelledCapture&&result==RESULT_OK&&intent!=null){RecorderService s=service();if(s!=null){s.showControls(null);s.startVideoSession(result,intent,remotePassive);if(s.recording&&s.session!=null&&remoteOwner!=null){try{s.session.set("captureOwner",remoteOwner);}catch(Exception e){s.error(e);}}remotePassive=false;remoteOwner="";moveTaskToBack(true);}}
         if(request==EXPORT&&result==RESULT_OK&&intent!=null&&exporting!=null){
             final File dir=exporting;final Uri uri=intent.getData();
             new Thread(()->{String msg;try{OutputStream out=getContentResolver().openOutputStream(uri);if(out==null)throw new IOException("Cannot open destination");SessionStore.export(dir,out);msg="Session ZIP exported";}catch(Exception e){msg="Export failed: "+e.getMessage();}

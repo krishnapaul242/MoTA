@@ -93,11 +93,11 @@ Sleep settings remain active after VS Code closes until restored; the one-hour o
 
 ## Record device input, screenshots and video
 
-Run **MoTA: Recordings**, or choose **Recordings** from a ready device's context menu. Use **Set up helper** to install the bundled MoTA Recorder 0.2.0 APK (Android 11+). On the device, enable its accessibility service. Android may require **App info → Allow restricted settings** for a sideloaded accessibility app. MoTA does not enable accessibility or approve screen sharing for you.
+Run **MoTA: Recordings**, or choose **Recordings** from a ready device's context menu. Use **Set up helper** to install the bundled MoTA Recorder 0.2.2 APK (Android 11+). On the device, enable its accessibility service. Android may require **App info → Allow restricted settings** for a sideloaded accessibility app. MoTA does not enable accessibility or approve screen sharing for you.
 
 **Start recording** asks for a mode, name, optional target app package, and capture options:
 
-- **ADB input recording** reads physical multitouch events without intercepting them, so interaction feels normal. MoTA checks `getevent -lp` for readable protocol-B touchscreen devices and calibrated X/Y ranges. This mode currently requires the natural display orientation (`rotation = 0`). If Android denies access or exposes an unsupported input protocol, choose overlay mode. The helper's floating controls are hidden in ADB mode; stop from MoTA.
+- **ADB input recording** reads physical multitouch events without intercepting them, so interaction feels normal. MoTA checks `getevent -lp` for readable protocol-A or protocol-B touchscreen devices and calibrated X/Y ranges, then detects the active touchscreen from the first contact instead of asking you to select an event device. This mode currently requires the natural display orientation (`rotation = 0`). If Android denies access or exposes an unsupported input protocol, choose overlay mode. The helper's floating controls are hidden in ADB mode; stop from MoTA.
 - **Overlay recording** uses the helper's existing capture overlay. Each gesture reaches the app after all fingers lift. Use its toolbar for Back, Home, Recents, explicit text insertion, pause and screenshots.
 - **Screen video** opens Android's capture-consent dialog. Approve it on the device and choose the entire screen for flows across apps. Video is H.264 MP4 without audio. Protected windows may block capture. Screenshots are attempted at most about once a second; capture errors are retained in helper metadata.
 
@@ -112,3 +112,15 @@ The bridge uses authenticated JSON over an Android abstract socket forwarded thr
 ADB mode decodes touch paths, per-finger start/duration and supported navigation/volume key events. It does not reconstruct arbitrary keyboard text, pressure or exact pointer velocity. Android controls replay velocity along each accessibility stroke. Input axes are assumed to align with the natural display; verify a short flow on each device/OEM before relying on longer recordings. Unsupported or dropped input and gestures exceeding ten strokes or 59 seconds stop recording as incomplete. Replay is limited to 10,000 actions and 7 MB of JSON; sessions and archives have a 2 GB media limit. Permissions, system navigation and protected windows can differ by Android version and OEM.
 
 Build the helper with `./helper-apk/build.sh`; this also refreshes `resources/mota-recorder.apk`. Run `npm test`, then `npm run package` to produce the extension. See `helper-apk/README.md` in the source checkout for the APK's standalone workflow.
+
+Recording failures display selectable diagnostic text and a **Copy error details** button. The report includes the operation, device, helper state, detected input device and error message/stack.
+
+The floating overlay has collapsed and expanded layouts. Collapsed shows only a record/stop button and an expand chevron; expanded shows all controls and a collapse chevron. Expand the menu and drag its status label to reposition it. The selected layout is remembered and expansion stays within screen bounds.
+
+## Device control page
+
+Click a ready device in the Devices list, or run **MoTA: Device Controls**. Its page groups Capture, Apps & deep links, Input, Diagnostics, and ADB & files. Capture screenshots without a helper, copy them as PNG images, or save them. Screen recording uses helper 0.2.2 and Android capture consent; capture can pause/resume into one MP4. Finished videos have playback/pause, seeking, PNG frame copy and frame save controls. Copy works through the webview image clipboard with a native desktop fallback; Linux fallback needs wl-copy or xclip. Remote hosts may require saving an image for local copying.
+
+Deep links accept an optional package and preserve URI query parameters. App controls support launch, force stop, install, clear data and uninstall; destructive presets ask for confirmation. Device inputs include navigation, volume, wake/sleep, taps, swipes and basic text. Diagnostics reuse logcat and live stats. File actions push/pull a chosen file. The advanced runner accepts Android shell commands or device-scoped ADB arguments; it always fixes the selected serial and never invokes a host shell. An interactive device shell is available for long-running work.
+
+Video capture is separate from input record/replay. The page owns only the screen capture it started and cancels it when closed. Captures stay in extension storage until explicitly saved elsewhere. Protected screens can block capture; H.264 playback depends on the VS Code build. If frame copying is attempted while seeking, wait for the seek to finish first.

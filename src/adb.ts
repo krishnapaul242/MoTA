@@ -24,6 +24,7 @@ export class Adb {
   }
   shell(serial: string, args: string[]) { return this.run(['-s', serial, 'shell', ...args]); }
   stream(args: string[]) { return spawn(this.executable(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
+  terminalOptions(serial:string){return {shellPath:this.executable(),shellArgs:['-s',serial,'shell']};}
   async devices() { return parseDevices(await this.run(['devices', '-l'])); }
 }
 export function escapeHtml(value: string) { return value.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!)); }

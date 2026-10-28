@@ -93,3 +93,5 @@ node helper-apk/tests/bridge-smoke.js emulator-5554
 Pass `--exercise-service` to temporarily enable this helper's accessibility service and test remote passive start, active-file access rejection, Stop, finalized metadata and display mismatch rejection. The script restores the prior accessibility setting and never prints authentication tokens. This option is for dedicated emulator testing, not normal setup.
 
 Integration validation: the MoTA 0.3.0 desktop suite passes 46 tests, and helper 0.2.0 passed 14 real-emulator bridge checks (authentication, path restrictions, passive start/stop, finalized files and display mismatch rejection). These do not establish full physical-input or MediaProjection coverage on every device; the standalone capture limitations above still apply.
+
+The floating overlay has collapsed and expanded layouts. Collapsed shows only a record/stop button and an expand chevron; expanded shows all controls and a collapse chevron. Expand the menu and drag its status label to reposition it. The selected layout is remembered and expansion stays within screen bounds.

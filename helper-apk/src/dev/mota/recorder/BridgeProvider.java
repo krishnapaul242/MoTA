@@ -14,7 +14,7 @@ public class BridgeProvider extends ContentProvider {
         if(!"/bootstrap".equals(uri.getPath()))throw new IllegalArgumentException("Unknown path");
         try{
             Bridge bridge=Bridge.ensure(getContext());
-            JSONObject data=new JSONObject().put("protocol",1).put("version","0.2.0").put("socket","mota.recorder")
+            JSONObject data=new JSONObject().put("protocol",1).put("version","0.2.2").put("socket","mota.recorder")
                 .put("token",bridge.token).put("ready",RecorderService.live!=null);
             MatrixCursor cursor=new MatrixCursor(new String[]{"bridge"});
             cursor.addRow(new Object[]{Base64.encodeToString(data.toString().getBytes("UTF-8"),Base64.NO_WRAP)});return cursor;

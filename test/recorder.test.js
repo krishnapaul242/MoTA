@@ -24,9 +24,9 @@ function emit(decoder,time,code,value,type=code.startsWith('SYN')?'EV_SYN':code.
 function gesture(){return {type:'gesture',atMs:0,delayMs:0,...display,dispatch:'completed',strokes:[{pointerId:0,startMs:0,durationMs:100,points:[[10,20,0],[10,20,100]]}]};}
 function data(){return {schemaVersion:1,...display,actions:[gesture()]};}
 const meta={id:'id',name:'test',device:'old-address',identity:'same-phone',model:'Phone',createdAt:'2026-01-01',mode:'adb',complete:true};
-test('probe selects only calibrated protocol-B multitouch devices',()=>{
+test('probe detects calibrated protocol A and B multitouch devices',()=>{
  assert.deepEqual(touchDevices(fixture),[touch]);
- assert.deepEqual(touchDevices(fixture.replace('ABS_MT_SLOT','ABS_X')),[]);
+ assert.deepEqual(touchDevices(fixture.replace('ABS_MT_SLOT','ABS_X')),[{...touch,protocol:'a'}]);
  assert.deepEqual(touchDevices('Permission denied'),[]);
 });
 test('decoder retains two-finger timing, scales raw axes, and ends only after all fingers lift',()=>{
@@ -57,14 +57,14 @@ test('replay accepts reconnecting addresses but rejects other identities, incomp
 });
 test('bridge bootstrap rejects missing credentials and incompatible versions',()=>{
  assert.throws(()=>parseBootstrap('SecurityException'),/bridge unavailable/);
- const payload={protocol:1,version:'0.2.0',socket:'mota.recorder',token:'x'.repeat(44),ready:true};
+ const payload={protocol:1,version:'0.2.2',socket:'mota.recorder',token:'x'.repeat(44),ready:true};
  assert.equal(parseBootstrap('Row: 0 bridge='+Buffer.from(JSON.stringify(payload)).toString('base64')).ready,true);
  assert.throws(()=>parseBootstrap('bridge='+Buffer.from(JSON.stringify({...payload,version:'9'})).toString('base64')),/mismatch/);
 });
 test('helper client correlates replies and removes only its allocated forward',async()=>{
- const requests=[],calls=[];const server=net.createServer(socket=>{let buffer='';socket.on('data',chunk=>{buffer+=chunk;if(buffer.includes('\n')){const request=JSON.parse(buffer);requests.push(request);socket.end(JSON.stringify({id:request.id,result:{protocol:1,version:'0.2.0',ready:true}})+'\n');}});});
+ const requests=[],calls=[];const server=net.createServer(socket=>{let buffer='';socket.on('data',chunk=>{buffer+=chunk;if(buffer.includes('\n')){const request=JSON.parse(buffer);requests.push(request);socket.end(JSON.stringify({id:request.id,result:{protocol:1,version:'0.2.2',ready:true}})+'\n');}});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
- const bootstrap={protocol:1,version:'0.2.0',socket:'mota.recorder',token:'x'.repeat(44),ready:true};
+ const bootstrap={protocol:1,version:'0.2.2',socket:'mota.recorder',token:'x'.repeat(44),ready:true};
  const adb={shell:async()=> 'Row: 0 bridge='+Buffer.from(JSON.stringify(bootstrap)).toString('base64'),run:async args=>{calls.push(args);return String(port);}};
  const client=new HelperClient(adb,'phone');try{assert.equal((await client.connect()).ready,true);await client.request('stop');assert.deepEqual(requests.map(r=>r.op),['status','stop']);assert.ok(requests.every(r=>r.token===bootstrap.token));}finally{await client.dispose();await new Promise(r=>server.close(r));}
  assert.deepEqual(calls.at(-1),['-s','phone','forward','--remove',`tcp:${port}`]);assert.ok(calls.every(c=>!c.includes(bootstrap.token)));
@@ -90,20 +90,41 @@ test('helper downloads are chunked and reject traversal before writing',async()=
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
-test('raw recording drains checkpoint writes before stopping and marks interrupted input incomplete',async()=>{
+test('raw recording drains checkpoint writes before stopping and marks empty or interrupted input incomplete',async()=>{
  const {RawRecording}=require('../out/recorder');const {PassThrough}=require('node:stream');const {EventEmitter}=require('node:events');
  const root=await mkdtemp(join(tmpdir(),'mota-raw-'));try{
- for(const interrupted of [false,true]){
+ for(const interrupted of [false,true,'empty']){
  const store=new RecordingStore(join(root,String(interrupted))),staged=await store.create({...meta,complete:false});
  const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.kill=()=>{child.emit('close',0);return true;};
- const calls=[];const client={serial:'phone',request:async(op)=>{calls.push(op);return {protocol:1,version:'0.2.0',ready:true,recording:op!=='stop',session:'test',uptimeStartMs:1000,...display};}};
+ const calls=[];const client={serial:'phone',request:async(op)=>{calls.push(op);return {protocol:1,version:'0.2.2',ready:true,recording:op!=='stop',session:'test',uptimeStartMs:1000,...display};}};
  const raw=new RawRecording({stream:()=>child},client,display,touch,staged.dir,staged.meta,()=>{});await raw.start();
  const line=(at,code,value)=>child.stdout.write(`[ ${at}] /dev/input/event2: ${code.startsWith('SYN')?'EV_SYN':'EV_ABS'} ${code} ${value}\n`);
- line('1.100000','ABS_MT_TRACKING_ID','00000001');line('1.100000','ABS_MT_POSITION_X','000001f4');line('1.100000','ABS_MT_POSITION_Y','000003e8');line('1.100000','SYN_REPORT','00000000');
+ if(interrupted!=='empty'){line('1.100000','ABS_MT_TRACKING_ID','00000001');line('1.100000','ABS_MT_POSITION_X','000001f4');line('1.100000','ABS_MT_POSITION_Y','000003e8');line('1.100000','SYN_REPORT','00000000');}
  if(!interrupted){line('1.200000','ABS_MT_TRACKING_ID','ffffffff');line('1.200000','SYN_REPORT','00000000');}
  await raw.stop();await raw.stop();
  assert.equal(calls.filter(c=>c==='stop').length,1);const saved=JSON.parse(await readFile(join(staged.dir,'session.json'),'utf8'));assert.equal(saved.complete,!interrupted);
- const actions=JSON.parse(await readFile(join(staged.dir,'actions.json'),'utf8'));assert.equal(actions.actions.length,interrupted?0:1);if(interrupted)assert.match(saved.error,/finger/);
+ const actions=JSON.parse(await readFile(join(staged.dir,'actions.json'),'utf8'));assert.equal(actions.actions.length,interrupted?0:1);if(interrupted===true)assert.match(saved.error,/finger/);if(interrupted==='empty')assert.match(saved.error,/No touch.*0 event lines/);
  }
  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('decoder automatically selects the active device rather than the first emulator input',()=>{
+ const actions=[],inactive={...touch,path:'/dev/input/event11',name:'inactive'};const d=new InputDecoder([inactive,touch],display,1000,a=>actions.push(a));
+ emit(d,1.1,'ABS_MT_SLOT','00000003');emit(d,1.1,'ABS_MT_POSITION_X','000001f4');emit(d,1.1,'ABS_MT_POSITION_Y','000003e8');emit(d,1.1,'ABS_MT_TRACKING_ID','00000007');emit(d,1.1,'SYN_REPORT','00000000');
+ emit(d,1.2,'ABS_MT_TRACKING_ID','ffffffff');emit(d,1.2,'SYN_REPORT','00000000');
+ assert.equal(d.activeDevice.path,touch.path);assert.equal(actions.length,1);assert.equal(actions[0].strokes[0].pointerId,3);assert.deepEqual(actions[0].strokes[0].points[0],[50,100,0]);
+});
+test('protocol A records contact frames, holds and complete release without slots',()=>{
+ const actions=[],d=new InputDecoder({...touch,protocol:'a'},display,1000,a=>actions.push(a));
+ const contact=(at,id,x,y)=>{emit(d,at,'ABS_MT_TRACKING_ID',id);emit(d,at,'ABS_MT_POSITION_X',x);emit(d,at,'ABS_MT_POSITION_Y',y);emit(d,at,'SYN_MT_REPORT','00000000');};
+ contact(1.1,'00000000','000001f4','000003e8');emit(d,1.1,'SYN_REPORT','00000000');
+ contact(1.2,'00000000','000001f4','000003e8');contact(1.2,'00000001','000003e8','000007d0');emit(d,1.2,'SYN_REPORT','00000000');
+ contact(1.4,'00000001','00000300','00000700');emit(d,1.4,'SYN_REPORT','00000000');assert.equal(actions.length,0);
+ emit(d,1.8,'BTN_TOUCH','UP','EV_KEY');emit(d,1.8,'SYN_MT_REPORT','00000000');emit(d,1.8,'SYN_REPORT','00000000');
+ assert.equal(actions.length,1);assert.equal(actions[0].strokes.length,2);assert.equal(actions[0].strokes[0].durationMs,300);assert.equal(actions[0].strokes[1].startMs,100);assert.equal(actions[0].strokes[1].durationMs,600);validateSession({schemaVersion:1,...display,actions});
+});
+test('event parsing tolerates CRLF and trailing whitespace from adb',()=>{
+ const actions=[],d=new InputDecoder(touch,display,1000,a=>actions.push(a));
+ for(const [time,code,value]of [[1.1,'ABS_MT_TRACKING_ID','00000001'],[1.1,'ABS_MT_POSITION_X','00000020'],[1.1,'ABS_MT_POSITION_Y','00000020'],[1.1,'SYN_REPORT','00000000'],[1.2,'ABS_MT_TRACKING_ID','ffffffff'],[1.2,'SYN_REPORT','00000000']])d.line(`[ ${time.toFixed(6)}] ${touch.path}: ${code.startsWith('SYN')?'EV_SYN':'EV_ABS'} ${code} ${value}   \r`);
+ assert.equal(actions.length,1);
 });

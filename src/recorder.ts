@@ -150,10 +150,13 @@ export class RawRecording {
   private actionBytes = 0;
   private error?: string;
   private stderr = '';
-  constructor(private adb: Adb, private client: HelperClient, public display: HelperStatus, readonly touch: TouchDevice,
+  private eventLines = 0;
+  constructor(private adb: Adb, private client: HelperClient, public display: HelperStatus, readonly touch: TouchDevice | TouchDevice[],
     readonly dir: string, readonly meta: RecordingMeta, private changed: () => void) {}
   get failure() { return this.error; }
   get count() { return this.actions.length; }
+  get inputDevice() { return this.decoder?.activeDevice; }
+  get inputDiagnostics() { return `${this.eventLines} event lines received; ${this.inputDevice ? "selected " + this.inputDevice.name + " (" + this.inputDevice.path + ")" : "no active touchscreen detected"}`; }
   abort(message:string){this.error ||= message;return this.stop();}
   async start(existing?: HelperStatus) {
     const started = existing || await this.client.request<HelperStatus>('start', { mode: 'adb' });
@@ -170,17 +173,18 @@ export class RawRecording {
     });
     this.child = this.adb.stream(['-s', this.client.serial, 'shell', 'getevent', '-lt']);
     this.lines = createInterface({ input: this.child.stdout! });
-    this.lines.on('line', line => { if (this.stopped) return; try { this.decoder!.line(line); } catch (e) { this.error = e instanceof Error ? e.message : String(e); void this.stop(); this.changed(); } });
+    this.lines.on('line', line => { if (this.stopped) return; if(line.trimStart().startsWith('['))this.eventLines++;try { this.decoder!.line(line); } catch (e) { this.error = e instanceof Error ? e.message : String(e); void this.stop(); this.changed(); } });
     this.child.stderr?.on('data', chunk => { this.stderr = (this.stderr + chunk.toString()).slice(-4096); });
     this.child.on('error', e => { this.error = e.message; void this.stop(); this.changed(); });
     this.child.on('close', () => { if (!this.stopped) { this.error = 'Input stream disconnected. ' + this.stderr; void this.stop(); this.changed(); } });
     await new Promise(resolve => setTimeout(resolve, 250));
     if (this.error) throw new Error(this.error);
   }
-  data(): SessionData { return { schemaVersion: 1, width: this.display.width, height: this.display.height, rotation: this.display.rotation, captureMode: 'adb-events', actions: this.actions }; }
+  data(): SessionData { return { schemaVersion: 1, width: this.display.width, height: this.display.height, rotation: this.display.rotation, captureMode: 'adb-events', inputDevice: this.inputDevice, actions: this.actions }; }
   stop() { return this.stopPromise ||= this.finishStop(); }
   private async finishStop() {
     if (this.stopped) return; this.stopped = true; this.lines?.close(); this.child?.kill();
+    if (!this.actions.length && !this.decoder?.incomplete && !this.error) this.error = 'No touch or supported key events were captured. Interact directly with the selected phone or emulator screen. ' + this.inputDiagnostics;
     if (this.decoder?.incomplete && !this.error) this.error = 'Recording stopped while a finger was still down.';
     await this.client.request('stop').catch(e => { this.error ||= e.message; });
     await this.writeTail;

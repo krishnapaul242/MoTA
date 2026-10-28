@@ -34,7 +34,7 @@ public class VideoTest extends SmokeTest {
             }
             if(!CaptureService.active)throw new AssertionError("Consent UI did not start capture: "+labels);
             waitFor(()->service.session!=null&&"recording".equals(service.session.data.optString("videoStatus")),10000);
-            SystemClock.sleep(2200);final File dir=service.session.dir;main(()->service.stopEverything("Video smoke test saved"));
+            SystemClock.sleep(1200);main(()->{try{CaptureService.live.setPaused(true);}catch(Exception e){throw new RuntimeException(e);}});check(CaptureService.live.videoPaused,"Capture paused");SystemClock.sleep(500);main(()->{try{CaptureService.live.setPaused(false);}catch(Exception e){throw new RuntimeException(e);}});check(!CaptureService.live.videoPaused,"Capture resumed");SystemClock.sleep(1200);final File dir=service.session.dir;main(()->service.stopEverything("Video smoke test saved"));
             waitFor(()->!CaptureService.active,10000);JSONObject data=SessionStore.read(dir);
             check("saved".equals(data.getString("videoStatus")),"Video finalized successfully");
             File file=new File(dir,"screen.mp4");check(file.length()>1000,"MP4 file has content");

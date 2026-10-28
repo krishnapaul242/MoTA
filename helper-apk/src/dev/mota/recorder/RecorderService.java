@@ -20,7 +20,9 @@ public class RecorderService extends AccessibilityService {
     final Handler main=new Handler(Looper.getMainLooper());
     final ExecutorService io=Executors.newSingleThreadExecutor();
     WindowManager wm;
-    LinearLayout panel;
+    LinearLayout panel,compactControls,expandedControls;
+    ImageButton compactRecordButton,expandButton,collapseButton;
+    boolean overlayExpanded;
     TextView status;
     Button pauseButton,recordButton,playButton;
     TouchLayer touch;
@@ -54,16 +56,23 @@ public class RecorderService extends AccessibilityService {
     void showControls(File file) {
         if(file!=null && !recording && !playing) selected=file;
         if(panel!=null) { say(message); return; }
+        overlayExpanded=getSharedPreferences("overlay",0).getBoolean("expanded",false);
         panel=new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(6),dp(3),dp(6),dp(3)); panel.setBackgroundColor(0xF5102A43);
-        status=new TextView(this); status.setTextColor(0xFF72EFCE); status.setTextSize(11); status.setMaxLines(2);
-        status.setPadding(dp(4),dp(4),dp(4),dp(4)); panel.addView(status);
-        final float[] drag=new float[2]; final int[] base=new int[2];
-        status.setOnTouchListener((v,e)-> {
-            if(e.getAction()==MotionEvent.ACTION_DOWN) { drag[0]=e.getRawX();drag[1]=e.getRawY();base[0]=panelParams.x;base[1]=panelParams.y; }
-            if(e.getAction()==MotionEvent.ACTION_MOVE) { panelParams.x=Math.max(0,Math.min(width()-dp(290),base[0]+(int)(e.getRawX()-drag[0])));panelParams.y=Math.max(dp(24),Math.min(height()-dp(155),base[1]+(int)(e.getRawY()-drag[1])));wm.updateViewLayout(panel,panelParams); }
-            return true;
+        panel.setPadding(dp(6),dp(4),dp(6),dp(4));
+        android.graphics.drawable.GradientDrawable background=new android.graphics.drawable.GradientDrawable();
+        background.setColor(0xF5102A43);background.setCornerRadius(dp(12));panel.setBackground(background);
+        compactControls=new LinearLayout(this);panel.addView(compactControls);
+        compactRecordButton=icon(compactControls,R.drawable.record,"Start recording",()->{
+            if(recording||playing||CaptureService.active)stopEverything("Stopped • session saved");else startSession();
         });
+        expandButton=icon(compactControls,R.drawable.chevron_expand,"Expand recorder controls",()->setOverlayExpanded(true));
+        expandedControls=new LinearLayout(this);expandedControls.setOrientation(LinearLayout.VERTICAL);panel.addView(expandedControls);
+        LinearLayout header=new LinearLayout(this);expandedControls.addView(header);
+        status=new TextView(this);status.setTextColor(0xFF72EFCE);status.setTextSize(11);status.setMaxLines(2);
+        status.setGravity(Gravity.CENTER_VERTICAL);status.setPadding(dp(4),0,dp(4),0);
+        status.setContentDescription("Recorder status. Drag to move controls.");
+        header.addView(status,new LinearLayout.LayoutParams(0,dp(48),1));installDrag(status,true);
+        collapseButton=icon(header,R.drawable.chevron_collapse,"Collapse recorder controls",()->setOverlayExpanded(false));
         LinearLayout r=row(); recordButton=button(r,"Record",()->startSession());
         pauseButton=button(r,"Pause",()->togglePause()); button(r,"Stop",()->stopEverything("Stopped • session saved"));
         playButton=button(r,"Play",()->replaySelected());
@@ -71,12 +80,51 @@ public class RecorderService extends AccessibilityService {
         button(r,"Shot",()->screenshot(-1,true)); button(r,"Text",()->textDialog());
         r=row(); button(r,"Recents",()->global(GLOBAL_ACTION_RECENTS)); button(r,"Open",()->openApp());
         button(r,"Hide",()-> {stopEverything("Controls closed");hideControls();});
-        panelParams=new WindowManager.LayoutParams(dp(290),WindowManager.LayoutParams.WRAP_CONTENT,
+        panelParams=new WindowManager.LayoutParams(dp(overlayExpanded?290:108),WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT);
         panelParams.gravity=Gravity.TOP|Gravity.LEFT; panelParams.x=dp(12);panelParams.y=dp(40);
-        wm.addView(panel,panelParams); say(message); updateButtons();
+        compactControls.setVisibility(overlayExpanded?View.GONE:View.VISIBLE);
+        expandedControls.setVisibility(overlayExpanded?View.VISIBLE:View.GONE);
+        wm.addView(panel,panelParams); say(message); updateButtons();panel.post(this::clampOverlay);
     }
-    LinearLayout row() { LinearLayout r=new LinearLayout(this);panel.addView(r);return r; }
+    ImageButton icon(LinearLayout row,int drawable,String description,Runnable action){
+        ImageButton button=new ImageButton(this);button.setImageResource(drawable);button.setContentDescription(description);
+        button.setScaleType(ImageView.ScaleType.CENTER);button.setPadding(dp(12),dp(12),dp(12),dp(12));
+        android.util.TypedValue value=new android.util.TypedValue();getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless,value,true);
+        button.setBackgroundResource(value.resourceId);row.addView(button,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        button.setOnClickListener(v->action.run());return button;
+    }
+    void setOverlayExpanded(boolean expanded){
+        overlayExpanded=expanded;getSharedPreferences("overlay",0).edit().putBoolean("expanded",expanded).apply();
+        if(panel==null)return;
+        compactControls.setVisibility(expanded?View.GONE:View.VISIBLE);expandedControls.setVisibility(expanded?View.VISIBLE:View.GONE);
+        panelParams.width=dp(expanded?290:108);clampOverlay();panel.requestLayout();panel.post(this::clampOverlay);
+    }
+    void clampOverlay(){
+        if(panel==null||!panel.isAttachedToWindow())return;
+        panelParams.x=Math.max(0,Math.min(Math.max(0,width()-panelParams.width),panelParams.x));
+        panelParams.y=Math.max(0,Math.min(Math.max(0,height()-panel.getHeight()-dp(48)),panelParams.y));
+        wm.updateViewLayout(panel,panelParams);
+    }
+    void installDrag(View view,boolean handleOnly){
+        view.setOnTouchListener(new View.OnTouchListener(){
+            float downX,downY;int initialX,initialY;boolean dragging;
+            public boolean onTouch(View v,MotionEvent e){
+                switch(e.getActionMasked()){
+                    case MotionEvent.ACTION_DOWN:downX=e.getRawX();downY=e.getRawY();initialX=panelParams.x;initialY=panelParams.y;dragging=false;v.setPressed(!handleOnly);return true;
+                    case MotionEvent.ACTION_MOVE:
+                        float dx=e.getRawX()-downX,dy=e.getRawY()-downY;
+                        if(!dragging&&Math.hypot(dx,dy)>ViewConfiguration.get(RecorderService.this).getScaledTouchSlop()){dragging=true;v.setPressed(false);}
+                        if(dragging){panelParams.x=initialX+Math.round(dx);panelParams.y=initialY+Math.round(dy);clampOverlay();}
+                        return true;
+                    case MotionEvent.ACTION_UP:boolean click=!handleOnly&&!dragging;dragging=false;v.setPressed(false);if(click)v.performClick();return true;
+                    case MotionEvent.ACTION_CANCEL:dragging=false;v.setPressed(false);return true;
+                    default:return handleOnly||dragging;
+                }
+            }
+        });
+    }
+    LinearLayout row() { LinearLayout r=new LinearLayout(this);expandedControls.addView(r);return r; }
     Button button(LinearLayout r,String name,Runnable action) {
         Button b=new Button(this);b.setText(name);b.setTextSize(11);b.setAllCaps(false);b.setMinWidth(0);b.setMinimumWidth(0);
         b.setMinHeight(0);b.setMinimumHeight(0); b.setPadding(0,0,0,0);
@@ -84,6 +132,10 @@ public class RecorderService extends AccessibilityService {
     }
     void updateButtons() {
         if(panel==null)return;
+        boolean active=recording||playing||CaptureService.active;
+        compactRecordButton.setImageResource(active?R.drawable.stop:R.drawable.record);
+        compactRecordButton.setContentDescription(active?(playing?"Stop replay":"Stop recording"):"Start recording");
+        compactRecordButton.setEnabled(active||(!busy&&shotsPending==0));
         recordButton.setEnabled(!recording&&!playing&&!busy&&shotsPending==0&&!CaptureService.active);
         playButton.setEnabled(!recording&&!playing&&!busy&&shotsPending==0&&!CaptureService.active&&selected!=null);
         pauseButton.setEnabled(recording&&!busy&&!passiveRecording);pauseButton.setText(paused?"Resume":"Pause");
@@ -94,7 +146,7 @@ public class RecorderService extends AccessibilityService {
         else panelParams.flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         wm.updateViewLayout(panel,panelParams);
     }
-    void hideControls() { removeTouch(); if(panel!=null){ wm.removeView(panel);panel=null;status=null; } }
+    void hideControls() { removeTouch(); if(panel!=null){ wm.removeView(panel);panel=null;status=null;compactControls=null;expandedControls=null;compactRecordButton=null;expandButton=null;collapseButton=null; } }
     void openApp() {
         if(recording&&!paused) togglePause();
         startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

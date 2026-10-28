@@ -13,13 +13,15 @@ import java.io.*;
 /** User-approved video only; no microphone, network, or storage permissions. */
 public class CaptureService extends Service {
     static volatile boolean active;
+    static CaptureService live;
+    boolean videoPaused;
     MediaProjection projection;
     VirtualDisplay display;
     MediaRecorder recorder;
     SessionStore session;
     boolean started,closing;
     @Override public IBinder onBind(Intent i){return null;}
-    @Override public void onCreate(){super.onCreate();active=true;}
+    @Override public void onCreate(){super.onCreate();active=true;live=this;}
     @Override public int onStartCommand(Intent intent,int flags,int id) {
         if(intent==null||recorder!=null){stopSelf();return START_NOT_STICKY;}
         try {
@@ -56,13 +58,20 @@ public class CaptureService extends Service {
         }catch(Exception e){if(session!=null)session.note("Video failed: "+e.getMessage());if(RecorderService.live!=null)RecorderService.live.toast("Video failed: "+e.getMessage());stopSelf();}
         return START_NOT_STICKY;
     }
+    void setPaused(boolean paused)throws Exception{
+        if(!started||closing||recorder==null)throw new IOException("Screen recording is not active");
+        if(videoPaused==paused)return;
+        if(paused)recorder.pause();else recorder.resume();videoPaused=paused;
+        session.set("videoStatus",paused?"paused":"recording");
+        session.note((paused?"Video paused":"Video resumed")+" at wallMs="+(SystemClock.elapsedRealtime()-session.origin));
+    }
     @Override public void onDestroy() {
         if(closing)return;closing=true;
         String result="failed";
         if(recorder!=null){try{if(started){recorder.stop();result="saved";}}catch(Exception e){if(session!=null)session.note("Video finalization failed: "+e.getMessage());}recorder.release();}
         if(display!=null)display.release();if(projection!=null)projection.stop();
         if(session!=null){try{session.set("videoStatus",result);session.set("videoEndWallMs",SystemClock.elapsedRealtime()-session.origin);}catch(Exception e){session.note("Video metadata failed: "+e.getMessage());}}
-        active=false;stopForeground(STOP_FOREGROUND_REMOVE);
+        active=false;live=null;stopForeground(STOP_FOREGROUND_REMOVE);
         RecorderService s=RecorderService.live;
         if(s!=null){s.updateButtons();if(s.recording)s.say("Video stopped • gesture recording continues");}
         super.onDestroy();

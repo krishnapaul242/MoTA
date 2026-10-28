@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
 import { Adb } from './adb';
 export const HELPER_PACKAGE = 'dev.mota.recorder';
-export const HELPER_VERSION = '0.2.0';
+export const HELPER_VERSION = '0.2.2';
 export interface HelperStatus {
   protocol: number; version: string; ready: boolean; mode?: string; recording?: boolean; playing?: boolean;
-  paused?: boolean; busy?: boolean; videoActive?: boolean; message?: string; width: number; height: number;
-  rotation: number; videoStatus?: string; session?: string; actions?: number; uptimeStartMs?: number; replayIndex?: number; replayTotal?: number;
+  paused?: boolean; busy?: boolean; videoActive?: boolean; videoPaused?: boolean; overlayExpanded?: boolean; message?: string; width: number; height: number;
+  rotation: number; captureOwner?: string; videoStatus?: string; session?: string; actions?: number; uptimeStartMs?: number; replayIndex?: number; replayTotal?: number;
 }
 export interface HelperFile { path: string; size: number }
 export function parseBootstrap(output: string) {

@@ -22,10 +22,10 @@ cp build/base.apk build/unsigned.apk
 if [[ ! -f debug.keystore ]]; then
   "$JDK_PATH/bin/keytool" -genkeypair -keystore debug.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=MoTA Development,O=MoTA,C=IN' -keyalg RSA -keysize 2048 -validity 10000 -noprompt
 fi
-"$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out dist/mota-recorder-0.2.0.apk build/aligned.apk
-"$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" verify --verbose dist/mota-recorder-0.2.0.apk
-shasum -a 256 dist/mota-recorder-0.2.0.apk > dist/SHA256SUMS
-printf '\nAPK: %s/dist/mota-recorder-0.2.0.apk\n' "$PWD"
+"$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out dist/mota-recorder-0.2.2.apk build/aligned.apk
+"$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" verify --verbose dist/mota-recorder-0.2.2.apk
+shasum -a 256 dist/mota-recorder-0.2.2.apk > dist/SHA256SUMS
+printf '\nAPK: %s/dist/mota-recorder-0.2.2.apk\n' "$PWD"
 
 mkdir -p ../resources
-cp dist/mota-recorder-0.2.0.apk ../resources/mota-recorder.apk
+cp dist/mota-recorder-0.2.2.apk ../resources/mota-recorder.apk

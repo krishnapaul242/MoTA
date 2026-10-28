@@ -60,13 +60,16 @@ final class Bridge {
             RecorderService s=RecorderService.live;
             if(op.equals("status"))return status(s);
             if(s==null)throw new IOException("Enable MoTA Recorder in Accessibility settings");
+            String owner=params.optString("owner");
+            if(!owner.isEmpty()&&(op.equals("pauseVideo")||op.equals("resumeVideo")||op.equals("stop"))&&(s.session==null||!owner.equals(s.session.data.optString("captureOwner"))))throw new IOException("Capture belongs to another page");
             switch(op){
+                case "pauseVideo":case "resumeVideo":if(CaptureService.live==null)throw new IOException("Screen recording is not active");CaptureService.live.setPaused(op.equals("pauseVideo"));break;
                 case "controls":s.showControls(null);break;
                 case "start":
                     if(s.recording||s.playing||s.busy||s.shotsPending>0||CaptureService.active)throw new IOException("Device already busy");
                     s.startSession("adb".equals(params.optString("mode")));if(!s.recording)throw new IOException("Recording did not start");
                     break;
-                case "cancelVideo":if(MainActivity.visible!=null)MainActivity.visible.cancelRemoteVideo();s.stopEverything("Video request cancelled from MoTA");break;
+                case "cancelVideo":if(MainActivity.visible!=null&&(owner.isEmpty()||owner.equals(MainActivity.visible.remoteOwner)))MainActivity.visible.cancelRemoteVideo();if(owner.isEmpty()||(s.session!=null&&owner.equals(s.session.data.optString("captureOwner"))))s.stopEverything("Video request cancelled from MoTA");break;
                 case "stop":case "cancel":s.stopEverything("Stopped from MoTA");break;
                 case "shot":s.screenshot(params.optInt("actionIndex",-1),false);break;
                 case "replay":
@@ -89,10 +92,10 @@ final class Bridge {
         }}
     }
     JSONObject status(RecorderService s)throws Exception{
-        JSONObject r=new JSONObject().put("protocol",1).put("version","0.2.0").put("ready",s!=null).put("videoActive",CaptureService.active);
-        if(s!=null){r.put("recording",s.recording).put("playing",s.playing).put("paused",s.paused).put("busy",s.busy||s.shotsPending>0).put("message",s.message)
+        JSONObject r=new JSONObject().put("protocol",1).put("version","0.2.2").put("ready",s!=null).put("videoActive",CaptureService.active).put("videoPaused",CaptureService.live!=null&&CaptureService.live.videoPaused);
+        if(s!=null){r.put("overlayExpanded",s.overlayExpanded).put("recording",s.recording).put("playing",s.playing).put("paused",s.paused).put("busy",s.busy||s.shotsPending>0).put("message",s.message)
             .put("width",s.width()).put("height",s.height()).put("rotation",s.rotation()).put("replayIndex",s.replayIndex).put("replayTotal",s.replayTotal);
-            if(s.session!=null)r.put("session",s.session.dir.getName()).put("mode",s.passiveRecording?"adb":"overlay").put("actions",s.session.actions.length()).put("uptimeStartMs",s.session.data.optLong("uptimeStartMs")).put("videoStatus",s.session.data.optString("videoStatus"));
+            if(s.session!=null)r.put("session",s.session.dir.getName()).put("captureOwner",s.session.data.optString("captureOwner")).put("mode",s.passiveRecording?"adb":"overlay").put("actions",s.session.actions.length()).put("uptimeStartMs",s.session.data.optLong("uptimeStartMs")).put("videoStatus",s.session.data.optString("videoStatus"));
         }return r;
     }
     void validate(JSONObject d,RecorderService s)throws Exception{

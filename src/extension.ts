@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { detectApkPackage, validPackage, packageFromFailure, isInstallConflict } from './apk';
 import { ChildProcess } from 'node:child_process';
 import { Adb, Device, escapeHtml as html, parseServices, validAddress } from './adb';
+import { registerDevicePage } from './devicePage';
 import { registerRecordings } from './recordingsView';
 import { launchApp, setStayAwake, setScreenTimeout } from './deviceActions';
 import { page, actionScript } from './ui';
@@ -18,6 +19,7 @@ class Tree extends vscode.TreeItem {
     this.description = device ? `${device.state} · ${device.serial}` : uri ? vscode.workspace.asRelativePath(uri) : undefined;
     this.tooltip = this.description;
     this.iconPath = new vscode.ThemeIcon(device ? 'device-mobile' : 'package');
+    if(device?.state==='device')this.command={command:'mota.device',title:'Device controls',arguments:[this]};
     if (device?.state === 'remembered') this.command = {command:'mota.connect',title:'Reconnect',arguments:[device.serial]};
     if (uri) this.command = { command: 'mota.install', title: 'Install APK', arguments: [this] };
   }
@@ -85,6 +87,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
   context.subscriptions.push(devices, apks, vscode.window.registerTreeDataProvider('mota.devices', devices), vscode.window.registerTreeDataProvider('mota.apks', apks));
   registerRecordings(vscode, context, adb, choose);
+  registerDevicePage(vscode, context, adb, choose);
   command('mota.refresh', refresh);
   async function deviceResults(title: string, targets: Device[], action: (d: Device) => Promise<string>) {
     if (!targets.length) return;

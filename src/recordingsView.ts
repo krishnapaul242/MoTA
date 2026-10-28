@@ -38,6 +38,7 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
     private working = false;
     private workPromise: Promise<void> = Promise.resolve();
     private workFinished?: () => void;
+    private lastError = '';
     private message = 'Select a device to set up the helper or start recording.';
     private polling = false;
     private monitor: ReturnType<typeof setInterval>;
@@ -80,9 +81,11 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
       // Stop remains available while Android is waiting for capture consent.
       if (action === 'stop' && this.videoPending) { this.videoPending = false; await this.client?.request('cancelVideo').catch(() => {}); this.message = 'Cancelled waiting for video consent. Dismiss any capture prompt on the device.'; await this.render(); return; }
       if (this.working || this.disposed) return;
+      if(action!=='copy-error')this.lastError='';
       this.working = true;this.workPromise=new Promise(resolve=>{this.workFinished=resolve;});
       try {
         switch (action) {
+          case 'copy-error': if(this.lastError){await vscode.env.clipboard.writeText(this.lastError);this.message='Error details copied to clipboard.';}break;
           case 'setup': {
             if (this.active || this.replaying) throw new Error('Stop the active session first.');
             const d = await this.device(); const apk = context.asAbsolutePath('resources/mota-recorder.apk');
@@ -112,7 +115,7 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
           case 'helper': { const d = await this.device(); await adb.shell(d.serial, ['am', 'start', '-n', `${HELPER_PACKAGE}/.MainActivity`]); break; }
           default: return;
         }
-      } catch (e) { this.message = e instanceof Error ? e.message : String(e); }
+      } catch (e) { this.reportError(action,e); }
       finally { this.working = false;this.workFinished?.();this.workFinished=undefined; await this.render(); }
     }
     private async start() {
@@ -120,13 +123,12 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
       const client = await this.connect(); if (this.status?.recording || this.status?.playing || this.status?.busy || this.status?.videoActive) throw new Error('The helper is busy. Stop it on the device first.');
       const mode = await vscode.window.showQuickPick([{ label: 'ADB input recording', description: 'Normal direct interaction; requires readable multitouch events and natural orientation', value: 'adb' }, { label: 'Overlay recording', description: 'Fallback: each gesture reaches the app after finger-up', value: 'overlay' }], { title: 'Recording mode' });
       if (!mode || this.disposed) return;
-      let touch: TouchDevice | undefined;
+      let touch: TouchDevice[] | undefined;
       if (mode.value === 'adb') {
         if (this.status!.rotation !== 0) throw new Error('ADB recording requires natural display orientation. Rotate the device or choose overlay mode.');
         const candidates = await probeInput(adb, this.target!.serial);
-        if (!candidates.length) throw new Error('No readable protocol-B multitouch device was found. Choose overlay recording instead.');
-        touch = candidates.length === 1 ? candidates[0] : (await vscode.window.showQuickPick(candidates.map(t => ({ label: t.name, description: t.path, device: t })), { title: 'Choose the physical touchscreen' }))?.device;
-        if (!touch) return;
+        if (!candidates.length) throw new Error('No readable multitouch device was found. Choose overlay recording instead.');
+        touch = candidates;
       }
       const name = await vscode.window.showInputBox({ title: 'Recording name', value: 'Device flow' }); if (name === undefined || this.disposed) return;
       const pkg = await vscode.window.showInputBox({ title: 'Target app package (optional)', value: context.workspaceState.get('launchPackage', ''), placeHolder: 'com.example.app', validateInput: v => !v || validPackage(v) ? undefined : 'Enter a valid package ID' }); if (pkg === undefined || this.disposed) return;
@@ -178,7 +180,7 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
         active.meta.complete = !active.raw?.failure; active.meta.error = active.raw?.failure;
         await atomicJson(join(active.dir, 'session.json'), active.meta);
         this.selected = { dir: active.dir, meta: active.meta, data };
-        this.message = active.meta.complete ? `Saved ${data.actions.length} actions and available media.` : `Saved an incomplete recording: ${active.meta.error}`;
+        if(active.meta.complete)this.message=`Saved ${data.actions.length} actions and available media.`;else this.reportError("record input",new Error(active.meta.error || "Incomplete recording"));
       } catch (e) {
         active.meta.complete = false; active.meta.error = e instanceof Error ? e.message : String(e); await atomicJson(join(active.dir, 'session.json'), active.meta); throw e;
       } finally { this.active = undefined; }
@@ -212,8 +214,15 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
       if (!this.replayRun) return;
       await atomicJson(join(this.replayRun.dir, 'replay-results.json'), { startedAt: this.replayRun.startedAt, endedAt: new Date().toISOString(), outcome, completedActions: this.status?.replayIndex, totalActions: this.status?.replayTotal, message: this.status?.message }); this.replayRun = undefined;
     }
+    private reportError(operation:string,error:unknown){
+      const message=error instanceof Error?error.message:String(error);
+      this.message=message;
+      this.lastError=[`MoTA recording error`, `Operation: ${operation}`, `Device: ${this.target?.model || 'not selected'} (${this.target?.serial || 'none'})`,
+        `Helper: ${this.status?.version || 'not connected'}`, `State: recording=${!!this.status?.recording}, replaying=${!!this.status?.playing}, busy=${!!this.status?.busy}`,
+        `Input device: ${this.active?.raw?.inputDevice?.name || 'not detected'}`, this.active?.raw ? `Input stream: ${this.active.raw.inputDiagnostics}` : '', `Message: ${message}`,error instanceof Error?error.stack || '':''].filter(Boolean).join('\n');
+    }
     private async progress() {
-      if (!this.disposed) await this.panel.webview.postMessage({ status: this.message, actions: this.active?.raw?.count ?? this.status?.actions ?? 0, replayIndex: this.status?.replayIndex, replayTotal: this.status?.replayTotal });
+      if (!this.disposed) await this.panel.webview.postMessage({ status: this.active?.raw ? `${this.message} ${this.active.raw.inputDevice ? "Touchscreen: " + this.active.raw.inputDevice.name : "Waiting for the first touch to detect the active touchscreen."}` : this.message, actions: this.active?.raw?.count ?? this.status?.actions ?? 0, replayIndex: this.status?.replayIndex, replayTotal: this.status?.replayTotal });
     }
     private async poll() {
       if (this.disposed || this.working || this.polling || !this.client) return; this.polling = true;
@@ -229,7 +238,7 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
         }
         await this.progress();
       } catch (e) {
-        this.message = `Device connection interrupted: ${e instanceof Error ? e.message : String(e)}`;
+        this.reportError('monitor recording',e);
         if (this.active) { await this.active.raw?.stop().catch(() => {}); this.active.meta.complete = false; this.active.meta.error = this.message; await atomicJson(join(this.active.dir, 'session.json'), this.active.meta).catch(() => {}); this.active = undefined; }
         if (this.replaying) { await this.saveReplay('disconnected').catch(() => {}); this.replaying = false; }
         await this.client?.dispose(); this.client = undefined; await this.render();
@@ -249,7 +258,7 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
       const hasVideo = selected && await fs.stat(join(selected.dir, 'screen.mp4')).then(() => true, () => false);
       const video = hasVideo ? `<video controls preload="metadata" style="max-width:100%;max-height:480px" src="${html(this.panel.webview.asWebviewUri(vscode.Uri.file(join(selected!.dir, 'screen.mp4'))).toString())}"></video>` : '';
       this.panel.webview.html = page(`<header><div><h1>Recordings</h1><p>${html(this.target ? `${this.target.model} · ${this.target.serial}` : 'No device selected')}</p></div><div class="actions"><button data-action="device">Choose device</button><button data-action="setup">Set up helper</button><button data-action="refresh">Refresh status</button></div></header>
-        <section class="card"><p id="status" role="status">${html(this.message)}</p><p id="counts">${this.active?.raw?.count ?? this.status?.actions ?? 0} actions</p><div class="actions"><button data-action="start" ${this.active || this.replaying || this.videoPending ? 'disabled' : ''}>Start recording</button><button data-action="stop" ${this.active || this.replaying || this.videoPending ? '' : 'disabled'}>Stop</button><button data-action="helper">Open helper on device</button></div></section>
+        <section class="card"><p id="status" role="status">${html(this.message)}</p>${this.lastError ? `<pre id="error-details" role="alert" tabindex="0" style="user-select:text">${html(this.lastError)}</pre><button class="secondary" data-action="copy-error">Copy error details</button>` : ''}<p id="counts">${this.active?.raw?.count ?? this.status?.actions ?? 0} actions</p><div class="actions"><button data-action="start" ${this.active || this.replaying || this.videoPending ? 'disabled' : ''}>Start recording</button><button data-action="stop" ${this.active || this.replaying || this.videoPending ? '' : 'disabled'}>Stop</button><button data-action="helper">Open helper on device</button></div></section>
         <div class="actions"><button data-action="import">Import ZIP</button><button data-action="collect">Download device session</button><button data-action="folder">Open recordings folder</button></div>
         <p class="muted">ADB mode records normal physical input where supported. Overlay mode delivers gestures after finger-up. Video requires device consent. Replay is limited to the bound device and recorded display configuration.</p>
         <section class="card"><h2>Saved sessions</h2>${this.records.map((r, i) => `<p><button data-action="select" data-index="${i}">${html(r.meta.name)}</button> · ${r.data.actions.length} actions · ${html(r.meta.model)} · ${r.meta.complete ? 'Saved' : 'Incomplete'} ${r.meta.error ? html(r.meta.error) : ''}</p>`).join('') || '<p>No saved sessions yet.</p>'}</section>

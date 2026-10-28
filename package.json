@@ -1,8 +1,8 @@
 {
   "name": "mota-android",
   "displayName": "MoTA Android",
-  "description": "Android devices, wireless QR pairing, APK installs, logcat and live stats.",
-  "version": "0.3.0",
+  "description": "Android device controls, screenshots, video capture, recording and replay, APK installs and diagnostics.",
+  "version": "0.4.0",
   "publisher": "mota-local",
   "engines": {
     "vscode": "^1.95.0"
@@ -104,6 +104,12 @@
         "command": "mota.setupRecorder",
         "title": "MoTA: Set Up Recorder Helper",
         "shortTitle": "Set up recorder helper"
+      },
+      {
+        "command": "mota.device",
+        "title": "MoTA: Device Controls",
+        "shortTitle": "Device controls",
+        "icon": "$(settings-gear)"
       }
     ],
     "views": {
@@ -154,9 +160,19 @@
           "command": "mota.recordings",
           "when": "view == mota.devices",
           "group": "navigation@4"
+        },
+        {
+          "command": "mota.device",
+          "when": "view == mota.devices",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [
+        {
+          "command": "mota.device",
+          "when": "view == mota.devices && viewItem == device",
+          "group": "inline@0"
+        },
         {
           "command": "mota.logcat",
           "when": "view == mota.devices && viewItem == device",
