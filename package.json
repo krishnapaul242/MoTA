@@ -2,7 +2,7 @@
   "name": "mota-android",
   "displayName": "MoTA Android",
   "description": "Android device controls, screenshots, video capture, recording and replay, APK installs and diagnostics.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "mota-local",
   "engines": {
     "vscode": "^1.95.0"

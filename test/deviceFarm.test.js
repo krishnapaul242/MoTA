@@ -3,8 +3,13 @@ const assert = require('node:assert/strict');
 const {parseFarmInfo,connectionKind,gestureArgs,pairingQr,validPairingCode} = require('../out/deviceFarm');
 test('farm info parses device details from one shell call', () => {
   const out = '@mfr\nsamsung\n@rel\n14\n@sdk\n34\n@size\nPhysical size: 1080x2400\nOverride size: 720x1600\n@bat\nCurrent Battery Service state:\n  AC powered: false\n  USB powered: true\n  level: 41\n  scale: 50\n';
-  assert.deepEqual(parseFarmInfo(out),{manufacturer:'Samsung',android:'14',sdk:'34',width:720,height:1600,battery:82,charging:true});
-  assert.deepEqual(parseFarmInfo(''),{manufacturer:'',android:'',sdk:'',width:null,height:null,battery:null,charging:false});
+  assert.deepEqual(parseFarmInfo(out),{manufacturer:'Samsung',android:'14',sdk:'34',width:720,height:1600,battery:82,charging:true,managed:false});
+  assert.deepEqual(parseFarmInfo(''),{manufacturer:'',android:'',sdk:'',width:null,height:null,battery:null,charging:false,managed:false});
+});
+test('farm info marks phones where the MoTA helper is device owner', () => {
+  const owned = '@mfr\nXiaomi\n@owner\n  Device Owner: \n    admin=ComponentInfo{dev.mota.recorder/dev.mota.recorder.DeviceOwnerReceiver}\n';
+  assert.equal(parseFarmInfo(owned).managed, true);
+  assert.equal(parseFarmInfo('@owner\n  Device Owner: \n    admin=ComponentInfo{com.other/.Admin}\n').managed, false);
 });
 test('farm labels USB, Wi-Fi and emulator connections', () => {
   assert.equal(connectionKind('R58M12ABCDE'),'USB');

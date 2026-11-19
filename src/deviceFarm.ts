@@ -1,14 +1,17 @@
 import type * as VSCode from 'vscode';
 import * as QRCode from 'qrcode';
-import { randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { Adb, Device, mergeKnownDevices, parseServices, validAddress } from './adb';
 import { captureScreenshot, shellLiteral } from './deviceControl';
 import { devicePresets } from './devicePage';
 import { page } from './ui';
 import { ScreenMirror, streamSize } from './h264';
+import { HelperClient, HELPER_PACKAGE } from './helperClient';
+import { HelperDownloadServer, lanAddresses, parseDeviceOwner, provisioningPayload, readHelperMetadata } from './provisioning';
 
-export interface FarmInfo { manufacturer: string; android: string; sdk: string; width: number | null; height: number | null; battery: number | null; charging: boolean }
-export const FARM_INFO_SCRIPT = 'echo @mfr;getprop ro.product.manufacturer;echo @rel;getprop ro.build.version.release;echo @sdk;getprop ro.build.version.sdk;echo @size;wm size;echo @bat;dumpsys battery';
+export interface FarmInfo { manufacturer: string; android: string; sdk: string; width: number | null; height: number | null; battery: number | null; charging: boolean; managed: boolean }
+export const FARM_INFO_SCRIPT = 'echo @mfr;getprop ro.product.manufacturer;echo @rel;getprop ro.build.version.release;echo @sdk;getprop ro.build.version.sdk;echo @size;wm size;echo @bat;dumpsys battery;echo @owner;dumpsys device_policy | grep -A3 "Device Owner";true';
 
 /** Parses the sectioned output of FARM_INFO_SCRIPT. */
 export function parseFarmInfo(text: string): FarmInfo {
@@ -30,6 +33,7 @@ export function parseFarmInfo(text: string): FarmInfo {
     height: size ? +size[2] : null,
     battery: level && scale && +scale[1] ? Math.round(+level[1] / +scale[1] * 100) : null,
     charging: /(?:AC|USB|Wireless|Dock) powered:\s*true/i.test(bat),
+    managed: parseDeviceOwner(sections.owner || '') === HELPER_PACKAGE,
   };
 }
 export function connectionKind(serial: string): 'Emulator' | 'Wi-Fi' | 'USB' {
@@ -54,6 +58,17 @@ export function pairingQr(service: string, password: string) {
 }
 export function validPairingCode(code: unknown): code is string { return typeof code === 'string' && /^\d{6}$/.test(code); }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
+
+/** Managed (device-owner) phones only: stay awake while charging and postpone system updates for 30 days. */
+export async function applyFarmDefaults(adb: Adb, serial: string) {
+  const client = new HelperClient(adb, serial);
+  try {
+    await client.connect();
+    await client.request('adminStayAwake', { enabled: true });
+    await client.request('adminUpdatePolicy', { policy: 'postpone' });
+  } finally { await client.dispose(); }
+}
 
 const KEYS = ['back', 'home', 'recents', 'volumeUp', 'volumeDown', 'wake', 'sleep'];
 const THUMBNAIL_MS = 5000, LIST_MS = 3000, INFO_MS = 60000;
@@ -83,6 +98,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
     private lastList = 0;
     private timer: ReturnType<typeof setInterval>;
     private qrToken = 0;
+    private provisioning?: HelperDownloadServer;
 
     constructor() {
       this.panel = vscode.window.createWebviewPanel('mota.farm', 'MoTA · Device farm', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
@@ -90,7 +106,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
       this.panel.webview.onDidReceiveMessage(m => { void this.message(m).catch(e => this.notice(e instanceof Error ? e.message : String(e), true)); });
       this.timer = setInterval(() => this.tick(), 400);
     }
-    dispose() { this.closed = true; this.qrToken++; this.stopMirror(); clearInterval(this.timer); }
+    dispose() { this.closed = true; this.qrToken++; this.provisioning?.close('closed'); this.stopMirror(); clearInterval(this.timer); }
     private stopMirror() { this.mirror?.stop(); this.mirror = undefined; }
     private post(m: unknown) { if (!this.closed) void this.panel.webview.postMessage(m); }
     private notice(text: string, error = false) { this.post({ kind: 'notice', text, error }); }
@@ -173,6 +189,9 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         case 'connect-address': return this.withStatus('address', () => this.connectAddress(String(m.address ?? '').trim()));
         case 'pair-code': return this.withStatus('code', () => this.pairCode(String(m.address ?? '').trim(), m.code));
         case 'bulk': return this.bulk(String(m.command), Array.isArray(m.serials) ? m.serials : []);
+        case 'provision-addresses': this.post({ kind: 'provision-addresses', list: lanAddresses(), serving: !!this.provisioning }); return;
+        case 'provision-start': return this.provisionStart(m);
+        case 'provision-stop': this.provisioning?.close('stopped'); return;
       }
     }
     private startMirror(d: Device) {
@@ -249,6 +268,42 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         if (token === this.qrToken) this.status('qr', 'error', e instanceof Error ? e.message : String(e));
       }
     }
+    /** Serves the bundled helper on the LAN and shows the device-owner setup QR. */
+    private async provisionStart(m: any) {
+      this.provisioning?.close('replaced');
+      try {
+        const addresses = lanAddresses();
+        const address = addresses.find(a => a.address === m.address)?.address ?? addresses[0]?.address;
+        if (!address) throw new Error('This computer has no local network address. Connect it to the same Wi-Fi as the phone.');
+        const ssid = typeof m.ssid === 'string' ? m.ssid.trim() : '', password = typeof m.password === 'string' ? m.password : '';
+        if (!ssid && password) throw new Error('Enter the Wi-Fi name for this password.');
+        const meta = readHelperMetadata(context.asAbsolutePath('resources/mota-recorder.json'));
+        const apk = context.asAbsolutePath('resources/mota-recorder.apk');
+        if (createHash('sha256').update(readFileSync(apk)).digest('hex') !== meta.sha256) throw new Error('The bundled helper does not match its metadata. Rebuild the helper.');
+        let downloads = 0;
+        const server: HelperDownloadServer = this.provisioning = new HelperDownloadServer(apk, address,
+          from => {
+            if (this.provisioning !== server) return;
+            downloads++;
+            this.status('managed', 'ok', `Phone ${from} downloaded the helper${downloads > 1 ? ` (${downloads} downloads)` : ''}. Finish setup on the phone, turn on USB debugging and plug it in. It shows as Managed here.`);
+          },
+          reason => {
+            if (this.provisioning !== server) return;
+            this.provisioning = undefined;
+            this.post({ kind: 'provision-qr', src: '' });
+            if (reason === 'expired') this.status('managed', 'error', 'The setup QR expired. Create a new one.');
+            else if (reason === 'stopped' && !downloads) this.status('managed', 'working', 'Stopped serving the helper.');
+          });
+        const url = await server.url;
+        const payload = provisioningPayload(url, meta.signatureChecksum, ssid ? { ssid, password: password || undefined } : undefined);
+        if (this.provisioning !== server) return;
+        this.post({ kind: 'provision-qr', src: await QRCode.toDataURL(payload, { margin: 2, width: 320, errorCorrectionLevel: 'M' }) });
+        this.status('managed', 'working', `Serving the helper from ${address} for 15 minutes. Scan the code on the phone's first setup screen.`);
+      } catch (e) {
+        this.provisioning?.close('error');
+        this.status('managed', 'error', errorText(e));
+      }
+    }
     private async afterChange() { this.info.clear(); await refreshTree(); this.lastList = 0; await this.list(); }
 
     private async bulk(command: string, serials: unknown[]) {
@@ -268,6 +323,11 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         if (!wifi.length) { this.notice('Only Wi-Fi devices can be disconnected. Unplug USB devices instead.', true); return; }
         targets.splice(0, targets.length, ...wifi);
         label = 'Disconnect'; run = d => adb.run(['disconnect', d.serial]);
+      } else if (command === 'managed') {
+        const managed = targets.filter(d => this.info.get(d.serial)?.value.managed);
+        if (!managed.length) { this.notice('None of the selected devices is managed by MoTA. Set phones up with Add device → Managed setup.', true); return; }
+        targets.splice(0, targets.length, ...managed);
+        label = 'Farm defaults'; run = d => applyFarmDefaults(adb, d.serial);
       } else throw new Error('Unknown action.');
       const results = await Promise.allSettled(targets.map(run));
       const failed = results.flatMap((r, i) => r.status === 'rejected' ? [`${targets[i].model}: ${r.reason instanceof Error ? r.reason.message : r.reason}`] : []);
@@ -315,7 +375,8 @@ button.small{padding:5px 10px;font-size:12px}
 .addtabs button{background:none;color:var(--vscode-foreground);border-radius:0;border-bottom:2px solid transparent;padding:8px 12px}
 .addtabs button[aria-selected=true]{border-bottom-color:var(--vscode-focusBorder);font-weight:600}
 .dialog form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}.dialog form label{display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1;min-width:150px}
-.qrbox{display:flex;justify-content:center;margin:8px 0}.qrbox img{background:#fff;border-radius:10px;width:240px;height:240px}
+.qrbox{display:flex;justify-content:center;margin:8px 0}.qrbox img{background:#fff;border-radius:10px;width:240px;height:240px}.qrbox img.big{width:300px;height:300px}
+.dialog select{width:100%}
 .st{min-height:1.5em;font-size:13px}.st.ok{color:var(--vscode-testing-iconPassed,#3fb950)}.st.error{color:var(--vscode-errorForeground)}.st.working{color:var(--vscode-descriptionForeground)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.dialog ol{padding-left:20px;margin:6px 0 12px}
 .viewer{display:flex;gap:20px;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:14px;padding:18px;max-height:100%;max-width:100%}
@@ -337,7 +398,7 @@ button.small{padding:5px 10px;font-size:12px}
 <div class="selbar" id="selbar" hidden><b id="selcount"></b>
 <button class="small" data-bulk="install">Install APK</button><button class="small" data-bulk="launch">Launch app</button>
 <button class="small secondary" data-bulk="home">Home</button><button class="small secondary" data-bulk="back">Back</button><button class="small secondary" data-bulk="wake">Wake</button><button class="small secondary" data-bulk="sleep">Sleep</button>
-<button class="small secondary" data-bulk="monitor">Monitor</button><button class="small secondary" data-bulk="logs">Logs</button><button class="small secondary" data-bulk="awake">Keep awake</button>
+<button class="small secondary" data-bulk="monitor">Monitor</button><button class="small secondary" data-bulk="logs">Logs</button><button class="small secondary" data-bulk="awake">Keep awake</button><button class="small secondary" data-bulk="managed" title="Managed phones only: stay awake while charging and postpone system updates for 30 days">Farm defaults</button>
 <button class="small secondary" data-bulk="disconnect">Disconnect</button><button class="small secondary" data-bulk="reboot">Reboot</button>
 <button class="small secondary" data-top="clear">Clear selection</button></div>
 <p class="error" id="error"></p>
@@ -352,7 +413,7 @@ button.small{padding:5px 10px;font-size:12px}
 </div></div></div>
 <div id="add" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="addtitle">
 <div class="row"><h2 id="addtitle" style="margin:0">Add a device</h2><button class="secondary small" data-add="close">Close</button></div>
-<nav class="addtabs" role="tablist"><button role="tab" data-tab="qr" aria-selected="true">QR code</button><button role="tab" data-tab="code" aria-selected="false">Pairing code</button><button role="tab" data-tab="address" aria-selected="false">IP address</button><button role="tab" data-tab="usb" aria-selected="false">USB</button></nav>
+<nav class="addtabs" role="tablist"><button role="tab" data-tab="qr" aria-selected="true">QR code</button><button role="tab" data-tab="code" aria-selected="false">Pairing code</button><button role="tab" data-tab="address" aria-selected="false">IP address</button><button role="tab" data-tab="usb" aria-selected="false">USB</button><button role="tab" data-tab="managed" aria-selected="false">Managed setup</button></nav>
 <section data-pane="qr"><ol><li>Connect the phone to the same Wi-Fi as this computer.</li><li>On the phone (Android 11+), open <b>Developer options → Wireless debugging → Pair device with QR code</b>.</li><li>Scan this code.</li></ol>
 <div class="qrbox"><img id="qrimg" alt="ADB pairing QR code" hidden></div><p class="st" id="st-qr" role="status"></p><button class="secondary small" data-add="qr-new">New QR code</button></section>
 <section data-pane="code" hidden><ol><li>On the phone, open <b>Developer options → Wireless debugging → Pair device with pairing code</b>.</li><li>Enter the IP address &amp; port and the 6-digit code it shows.</li></ol>
@@ -360,6 +421,11 @@ button.small{padding:5px 10px;font-size:12px}
 <section data-pane="address" hidden><p class="muted">For a phone that is already paired, or one switched to <code>adb tcpip</code> mode. Use the IP address &amp; port on the main <b>Wireless debugging</b> screen, not the pairing port. The port changes whenever Wireless debugging restarts.</p>
 <form id="addrform"><label>IP address &amp; port<input id="addr" placeholder="192.168.1.10:41235" autocomplete="off"></label><button>Connect</button></form><div class="chips" id="recent"></div><p class="st" id="st-address" role="status"></p></section>
 <section data-pane="usb" hidden><ol><li>On the phone, open <b>Settings → About phone</b> and tap <b>Build number</b> seven times to enable Developer options.</li><li>Turn on <b>Developer options → USB debugging</b>.</li><li>Plug the phone in and accept the <b>Allow USB debugging</b> prompt.</li></ol><p class="muted">USB devices appear in the farm automatically.</p></section>
+<section data-pane="managed" hidden><p class="muted">Makes MoTA the device owner of a dedicated test phone, so it can install apps and grant permissions without a SIM, Mi account or USB security settings. <b>This needs a factory reset.</b></p>
+<ol><li>Factory reset the phone. Don't add a Google or Mi account.</li><li>On the first setup screen, tap the same spot six times to open the QR scanner.</li><li>Scan the code. The phone downloads the MoTA helper from this computer and finishes setup with it.</li><li>Turn on Developer options and USB debugging, plug the phone in, and turn on MoTA Recorder in Accessibility settings.</li></ol>
+<form id="provform"><label>This computer's address<select id="provaddr" aria-label="Network address the phone downloads from"></select></label><label>Wi-Fi name (optional)<input id="provssid" autocomplete="off" maxlength="32"></label><label>Wi-Fi password<input id="provpass" type="password" autocomplete="off" maxlength="63"></label><button>Create setup QR</button></form>
+<p class="muted">The phone must reach this computer on the same network. macOS may ask whether VS Code can accept incoming connections. Anyone who scans the code can read a Wi-Fi password in it.</p>
+<div class="qrbox"><img id="provimg" class="big" alt="Device-owner setup QR code" hidden></div><p class="st" id="st-managed" role="status"></p><button class="secondary small" data-add="prov-stop" id="provstop" hidden>Stop serving</button></section>
 </div></div>
 <div id="notice" hidden role="status"></div>`;
 
@@ -370,11 +436,11 @@ let devices=[],last='',focus=null,noticeTimer;const selected=new Set(),frames={}
 const label={device:'Available',unauthorized:'Unauthorized',offline:'Offline',remembered:'Disconnected'};
 function matches(d){const q=$('search').value.trim().toLowerCase(),f=$('status').value;
  if(f==='device'&&d.state!=='device')return false;if(f==='remembered'&&d.state!=='remembered')return false;if(f==='attention'&&!['unauthorized','offline'].includes(d.state))return false;
- const i=d.info||{};return !q||[d.model,d.serial,d.kind,i.manufacturer,i.android&&'android '+i.android].some(v=>v&&String(v).toLowerCase().includes(q));}
+ const i=d.info||{};return !q||[d.model,d.serial,d.kind,i.manufacturer,i.android&&'android '+i.android,i.managed&&'managed'].some(v=>v&&String(v).toLowerCase().includes(q));}
 function card(d){const i=d.info||{},on=d.state==='device',st=focus===d.serial?'focus':d.state;
  const screen=on?(frames[d.serial]?'<img data-serial="'+esc(d.serial)+'" src="'+frames[d.serial]+'" alt="Screen of '+esc(d.model)+'">':'<span class="msg">'+esc(frameErrors[d.serial]||($('live').checked?'Loading screen…':'Live screens off'))+'</span>')
   :'<span class="msg">'+(d.state==='unauthorized'?'Unlock the device and accept the USB debugging prompt.':d.state==='offline'?'Device is offline. Reconnect it or restart ADB.':'Not connected. Wireless ports change, so reconnect or pair again.')+'</span>';
- const tags=[d.kind,i.battery!=null?i.battery+'%'+(i.charging?' ⚡':''):'',i.width?i.width+'×'+i.height:''].filter(Boolean).map(t=>'<span class="tag">'+esc(t)+'</span>').join('');
+ const tags=[d.kind,i.managed?'Managed':'',i.battery!=null?i.battery+'%'+(i.charging?' ⚡':''):'',i.width?i.width+'×'+i.height:''].filter(Boolean).map(t=>'<span class="tag">'+esc(t)+'</span>').join('');
  const sub=[i.manufacturer,i.android&&'Android '+i.android,i.sdk&&'API '+i.sdk].filter(Boolean).join(' · ');
  const acts=on?'<button class="small" data-card="use">Use</button><button class="small secondary" data-card="controls">Controls</button><button class="small secondary" data-card="logs">Logs</button>'
   :(d.state==='remembered'||d.kind==='Wi-Fi')?'<button class="small" data-card="reconnect">Reconnect</button>':'';
@@ -402,6 +468,7 @@ document.addEventListener('click',e=>{const t=e.target;
  if(b.dataset.tab){showTab(b.dataset.tab);return;}
  if(b.dataset.add==='close'){closeAdd();return;}
  if(b.dataset.add==='qr-new'){startQr();return;}
+ if(b.dataset.add==='prov-stop'){api.postMessage({action:'provision-stop'});return;}
  if(b.dataset.recent){$('addr').value=b.dataset.recent;connectAddr();return;}
  if(b.dataset.card){const s=serialOf(b);if(b.dataset.card==='use')openView(s);else if(b.dataset.card==='reconnect')api.postMessage({action:'reconnect',serial:s});else api.postMessage({action:'bulk',command:b.dataset.card,serials:[s]});}
  else if(b.dataset.top==='refresh')api.postMessage({action:'refresh'});
@@ -419,13 +486,14 @@ function startQr(){$('qrimg').hidden=true;setStatus('qr','working','Generating c
 function showTab(t){if(tab==='qr'&&t!=='qr')api.postMessage({action:'qr-stop'});tab=t;
  document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===t)));
  document.querySelectorAll('[data-pane]').forEach(p=>p.hidden=p.dataset.pane!==t);
- if(t==='qr')startQr();if(t==='address'){api.postMessage({action:'addresses'});$('addr').focus();}if(t==='code')$('pairaddr').focus();}
+ if(t==='qr')startQr();if(t==='managed'){api.postMessage({action:'provision-addresses'});$('provssid').focus();}if(t==='address'){api.postMessage({action:'addresses'});$('addr').focus();}if(t==='code')$('pairaddr').focus();}
 function openAdd(){$('add').hidden=false;showTab('qr');}
 function closeAdd(){$('add').hidden=true;api.postMessage({action:'qr-stop'});}
 function connectAddr(){const a=$('addr').value.trim();if(a){setStatus('address','working','Connecting…');api.postMessage({action:'connect-address',address:a});}}
 $('add').addEventListener('click',e=>{if(e.target===$('add'))closeAdd();});
 $('addrform').addEventListener('submit',e=>{e.preventDefault();connectAddr();});
 $('codeform').addEventListener('submit',e=>{e.preventDefault();const code=$('paircode').value.trim();if(!/^\\d{6}$/.test(code)){setStatus('code','error','Enter the 6-digit pairing code.');return;}setStatus('code','working','Pairing…');api.postMessage({action:'pair-code',address:$('pairaddr').value.trim(),code});});
+$('provform').addEventListener('submit',e=>{e.preventDefault();$('provimg').hidden=true;setStatus('managed','working','Starting…');api.postMessage({action:'provision-start',address:$('provaddr').value,ssid:$('provssid').value,password:$('provpass').value});});
 $('search').addEventListener('input',render);$('status').addEventListener('change',render);
 $('live').addEventListener('change',e=>{api.postMessage({action:'live',on:e.target.checked});render();});
 $('textform').addEventListener('submit',e=>{e.preventDefault();const v=$('text').value;if(v&&focus){api.postMessage({action:'text',serial:focus,text:v});$('text').value='';}});
@@ -472,6 +540,8 @@ window.addEventListener('message',e=>{const m=e.data;
  else if(m.kind==='focus-lost'){notice('The device disconnected.',true);closeView();}
  else if(m.kind==='notice')notice(m.text,m.error);
  else if(m.kind==='qr'){$('qrimg').src=m.src;$('qrimg').hidden=false;}
+ else if(m.kind==='provision-qr'){$('provimg').hidden=!m.src;if(m.src)$('provimg').src=m.src;$('provstop').hidden=!m.src;}
+ else if(m.kind==='provision-addresses'){const sel=$('provaddr'),prev=sel.value;sel.innerHTML=m.list.map(a=>'<option value="'+esc(a.address)+'">'+esc(a.address+' ('+a.name+')')+'</option>').join('');if(m.list.some(a=>a.address===prev))sel.value=prev;if(!m.list.length)setStatus('managed','error','No local network address found. Connect this computer to the same Wi-Fi as the phone.');$('provstop').hidden=!m.serving;}
  else if(m.kind==='add-status'){setStatus(m.tab,m.state,m.text);if(m.state==='ok'&&m.tab==='qr')$('qrimg').hidden=true;}
  else if(m.kind==='addresses')$('recent').innerHTML=m.list.length?'<small class="muted" style="width:100%">Recent</small>'+m.list.map(a=>'<button class="secondary small" data-recent="'+esc(a)+'">'+esc(a)+'</button>').join(''):'';});
 api.postMessage({action:'ready'});

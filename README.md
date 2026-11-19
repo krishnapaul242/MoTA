@@ -36,6 +36,12 @@ ADB uses mDNS to discover the pairing endpoint and automatically connect after s
 
 For USB, enable USB debugging and accept the phone's authorization prompt. Offline and unauthorized devices remain visible but cannot be selected for operations.
 
+## Managed test phones (device owner)
+
+Some phones restrict ADB. For example, Xiaomi's "USB debugging (Security settings)" needs a SIM and Mi account before `adb install`, `pm grant` or input injection work. A dedicated test phone can instead have the MoTA helper as its device owner. In the device farm, choose **Add device → Managed setup**, optionally enter Wi-Fi details, and select **Create setup QR**. Factory reset the phone, tap its first setup screen six times, and scan the code. Don't add a Google or Mi account. The phone downloads the helper from this computer and finishes setup with it.
+
+The extension serves only the bundled helper, at a random path on the chosen local address, for 15 minutes or until you select **Stop serving** or close the farm. The QR pins the helper's signing certificate, so the phone rejects any other file. The phone must reach this computer on the local network, and macOS may ask to allow incoming connections. A Wi-Fi password in the QR is readable by anyone who scans it. Afterwards, turn on Developer options, USB debugging and the helper's accessibility service on the phone. The farm tags it **Managed**. **Farm defaults** keeps managed phones awake while charging and postpones system updates for 30 days. Device-owner setup needs Android 10 or newer and is undone by a factory reset. Some regional firmware omits the six-tap QR option.
+
 ## APKs, logs and performance
 
 Build APKs with your project's normal Gradle/React Native workflow; this extension does not invoke builds. Click an APK to choose one or more ready devices, or run **MoTA: Install APK on Devices** to browse for one. Choose **Editor page** (the default) for per-device progress and recovery, or **Notification** for compact progress with an **Open install page** action. Review install options before starting: replace while keeping data, allow test APKs, permit downgrades for debuggable apps, grant runtime permissions, Android user ID, and a 10–600 second timeout. Options are remembered per workspace. Retry runs only on devices that have not succeeded; failures offer tailored guidance, reconnect and ADB settings actions. Standalone APKs are supported; split APK sets and AAB bundles are not.
