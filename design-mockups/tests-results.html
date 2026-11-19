@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · Test results</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.stats .card { padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.stats .v { font-size: 22px; font-weight: 600; color: var(--mota-heading); font-variant-numeric: tabular-nums; }
+.summary { display: flex; flex-direction: column; gap: 10px; }
+.finding { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; }
+.finding + .finding { border-top: 1px solid var(--vscode-panel-border); }
+.kind { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.kind.bug { background: rgba(244,135,113,.15); color: var(--vscode-errorForeground); }
+.kind.env { background: rgba(204,167,0,.15); color: var(--vscode-editorWarning-foreground); }
+.kind.broken { background: rgba(55,148,255,.15); color: var(--vscode-charts-blue); }
+table.grid { width: 100%; border-collapse: collapse; min-width: 640px; }
+table.grid th { text-align: left; font-size: 12px; font-weight: 600; color: var(--vscode-descriptionForeground); padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); }
+table.grid td { padding: 6px 12px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 12px; }
+table.grid td.flow { font-family: var(--vscode-editor-font-family); color: var(--mota-heading); }
+.cell { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 4px; border: 1px solid transparent; background: transparent; color: inherit; font: inherit; cursor: default; font-variant-numeric: tabular-nums; }
+.cell svg.i { width: 14px; height: 14px; }
+.cell.pass { color: var(--vscode-testing-iconPassed); }
+.cell.fail { color: var(--vscode-errorForeground); cursor: pointer; border-color: var(--mota-danger-border); }
+.cell.fail[aria-pressed="true"] { background: rgba(244,135,113,.12); border-color: var(--vscode-errorForeground); }
+.cell.skip { color: var(--vscode-descriptionForeground); }
+.cell .t { color: var(--vscode-descriptionForeground); }
+.detail { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.detail .shot { flex: 0 0 160px; }
+.detail .shot .phone { width: 160px; height: auto; border-width: 3px; }
+.detail .body { flex: 1 1 400px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.assert { padding: 8px 10px; border-left: 2px solid var(--vscode-errorForeground); background: var(--vscode-textCodeBlock-background); border-radius: 0 4px 4px 0; font-family: var(--vscode-editor-font-family); font-size: 12px; }
+.steps { font-family: var(--vscode-editor-font-family); font-size: 12px; line-height: 1.7; }
+.steps .ok { color: var(--vscode-testing-iconPassed); } .steps .no { color: var(--vscode-errorForeground); } .steps .na { color: var(--vscode-descriptionForeground); }
+.diff { font-family: var(--vscode-editor-font-family); font-size: 12px; line-height: 1.6; background: var(--vscode-textCodeBlock-background); border-radius: 6px; padding: 6px 0; overflow-x: auto; }
+.diff div { padding: 0 12px; white-space: pre; }
+.diff .del { background: rgba(244,135,113,.14); }
+.diff .add { background: rgba(63,185,80,.14); }
+.cols { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.cols > .wide { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.cols > .narrow { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.runrow { display: flex; justify-content: space-between; padding: 6px 0; font-size: 12px; }
+.runrow + .runrow { border-top: 1px solid var(--vscode-panel-border); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="page-header">
+    <div class="row" style="gap: 12px">
+      <a href="farm.html" class="icon-btn" title="Back to devices" aria-label="Back to devices"><svg data-i="arrowLeft"></svg></a>
+      <div><h1>Test run · 19 Nov, 10:42</h1><div class="subtitle">7 flows on 3 phones · finished in 7:48</div></div>
+    </div>
+    <div class="row">
+      <button class="btn btn-secondary">Run again</button>
+      <button class="btn btn-secondary"><svg data-i="download"></svg>Export JUnit</button>
+      <button class="icon-btn" title="Open run folder" aria-label="Open run folder"><svg data-i="folder"></svg></button>
+      <button class="btn btn-primary"><svg data-i="refresh"></svg>Rerun failed (2)</button>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="card"><span class="small muted">Flow runs</span><span class="v">21</span></div>
+    <div class="card"><span class="small muted">Passed</span><span class="v" style="color: var(--vscode-testing-iconPassed)">18</span></div>
+    <div class="card"><span class="small muted">Failed</span><span class="v" style="color: var(--vscode-errorForeground)">2</span></div>
+    <div class="card"><span class="small muted">Not run</span><span class="v">1</span></div>
+    <div class="card"><span class="small muted">Slowest flow</span><span class="v" style="font-size: 15px; padding-top: 6px">add_to_cart · 58 s</span></div>
+  </div>
+
+  <section class="card card-pad summary" aria-label="Claude's summary">
+    <div class="row" style="justify-content: space-between"><div class="row" style="gap: 8px"><svg data-i="sparkle" style="color: var(--vscode-charts-blue)"></svg><h2>Claude's summary</h2></div><span class="small muted">Used 96K of 150K tokens</span></div>
+    <div>2 real failures and 1 phone problem that recovered on rerun. Nothing fails on every phone. Both real failures appear only on one phone each.</div>
+    <div>
+      <div class="finding"><span class="kind bug">App bug</span><div style="flex: 1"><b>search.yaml on Galaxy S23.</b> The search API returned HTTP 503 and the app showed "Something went wrong" with no retry. The test is correct.<div class="row" style="margin-top: 6px"><button class="btn btn-secondary btn-sm">Draft bug report</button><button class="btn btn-ghost btn-sm">Rerun on Galaxy S23</button></div></div></div>
+      <div class="finding"><span class="kind broken">Broken test</span><div style="flex: 1"><b>profile_edit.yaml on Redmi Note 12.</b> The button text changed from "Save" to "Save changes" in <span class="mono">ProfileScreen.tsx</span> (uncommitted). It passed on the other phones only because their app build is older.<div class="row" style="margin-top: 6px"><button class="btn btn-secondary btn-sm">Review fix</button></div></div></div>
+      <div class="finding"><span class="kind env">Phone problem</span><div style="flex: 1"><b>onboarding.yaml on Redmi Note 12.</b> A MIUI permission dialog covered the screen. Claude dismissed it and the rerun passed. Consider granting the permission before runs.</div></div>
+    </div>
+  </section>
+
+  <div class="cols">
+    <div class="wide">
+      <section class="card" style="overflow-x: auto">
+        <table class="grid" aria-label="Results by flow and device">
+          <thead><tr><th>Flow</th><th>Pixel 8 Pro<div class="small muted" style="font-weight:400">Android 15 · USB</div></th><th>Galaxy S23<div class="small muted" style="font-weight:400">Android 14 · Wi-Fi</div></th><th>Redmi Note 12<div class="small muted" style="font-weight:400">Android 13 · managed</div></th></tr></thead>
+          <tbody id="grid"></tbody>
+        </table>
+        <div class="small muted" style="padding: 8px 12px">Redmi Note 12 disconnected at 7:31. logout.yaml is marked "not run (device lost)", not failed. pay_upi.yaml was excluded by the <span class="mono">slow</span> tag.</div>
+      </section>
+
+      <section class="card card-pad" aria-label="Failure details" style="display: flex; flex-direction: column; gap: 12px">
+        <div class="row" style="justify-content: space-between">
+          <div><h2><span style="color: var(--vscode-errorForeground)">✗</span> search.yaml on Galaxy S23</h2><div class="subtitle">Failed at step 4 of 6 · 14 s</div></div>
+          <div class="row"><button class="btn btn-secondary btn-sm">Rerun on this device</button><button class="btn btn-ghost btn-sm">Open flow in editor</button></div>
+        </div>
+        <nav class="tabs" role="tablist"><button role="tab" aria-selected="true">Failure</button><button role="tab" aria-selected="false">Maestro log</button><button role="tab" aria-selected="false">Logcat</button><button role="tab" aria-selected="false">Files</button></nav>
+        <div class="detail">
+          <div class="shot"><div class="phone dark" style="--accent:#5a4b8a"><div class="bar"></div><div class="blk"></div><div class="ln" style="width:60%"></div></div><div class="small muted" style="margin-top: 6px">Screenshot at failure</div></div>
+          <div class="body">
+            <div class="assert">Assertion is false: "Results" is visible<br>at search.yaml:14 · assertVisible: "Results"</div>
+            <div class="steps"><div class="ok">✓ launchApp</div><div class="ok">✓ tapOn: "Search"</div><div class="ok">✓ inputText: "running shoes"</div><div class="no">✗ assertVisible: "Results"</div><div class="na">– tapOn: id: result_0</div><div class="na">– assertVisible: "Add to cart"</div></div>
+            <div><div class="small muted" style="margin-bottom: 4px">Logcat around the failure</div><pre class="output">10:45:12.481 E OkHttp: --> GET /v2/search?q=running+shoes
+10:45:13.902 E SearchRepo: HTTP 503 Service Unavailable
+10:45:13.910 W ReactNativeJS: Search failed, showing error state</pre></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card card-pad" aria-label="Proposed flow fix" style="display: flex; flex-direction: column; gap: 10px">
+        <div class="row" style="justify-content: space-between"><div class="row" style="gap: 8px"><svg data-i="sparkle" style="color: var(--vscode-charts-blue)"></svg><h2>Proposed fix · profile_edit.yaml</h2></div><span class="small muted">Verified: passes on Redmi Note 12</span></div>
+        <div class="diff"><div>  - inputText: "Asha"</div><div class="del">- - tapOn: "Save"</div><div class="add">+ - tapOn: "Save changes"</div><div>  - assertVisible: "Profile updated"</div></div>
+        <div class="row"><button class="btn btn-primary btn-sm">Apply fix</button><button class="btn btn-secondary btn-sm">Open diff in editor</button><button class="btn btn-ghost btn-sm">Discard</button></div>
+      </section>
+    </div>
+
+    <div class="narrow">
+      <section class="card card-pad">
+        <h2 style="margin-bottom: 8px">By device</h2>
+        <div class="runrow"><span>Pixel 8 Pro</span><span class="muted">7 / 7 passed</span></div>
+        <div class="runrow"><span>Galaxy S23</span><span class="muted">6 passed · <span style="color: var(--vscode-errorForeground)">1 failed</span></span></div>
+        <div class="runrow"><span>Redmi Note 12</span><span class="muted">5 passed · <span style="color: var(--vscode-errorForeground)">1 failed</span> · 1 not run</span></div>
+      </section>
+      <section class="card card-pad">
+        <h2 style="margin-bottom: 8px">Previous runs</h2>
+        <div class="runrow"><a href="#">Today 10:42</a><span class="muted">18 ✓ · 2 ✗ · 1 –</span></div>
+        <div class="runrow"><a href="#">Today 09:15</a><span class="muted">19 ✓ · 2 ✗</span></div>
+        <div class="runrow"><a href="#">Yesterday 18:03</a><span class="muted">21 ✓</span></div>
+        <div class="small muted" style="margin-top: 8px">Saved in <span class="mono">.mota/test-runs/</span></div>
+      </section>
+    </div>
+  </div>
+</div>
+<section class="ai-dock" data-scope="This run · 3 devices"></section>
+<script>
+const P = (t) => `<span class="cell pass"><svg data-i="checkCircle"></svg><span class="t">${t}</span></span>`;
+const F = (t, on) => `<button class="cell fail" aria-pressed="${!!on}" title="Show failure"><svg data-i="error"></svg><span class="t">${t}</span></button>`;
+const S = (t) => `<span class="cell skip">– ${t}</span>`;
+const rows = [
+  ['login.yaml', P('12 s'), P('15 s'), P('18 s')],
+  ['onboarding.yaml', P('21 s'), P('24 s'), P('30 s · rerun')],
+  ['search.yaml', P('9 s'), F('14 s', true), P('13 s')],
+  ['product_detail.yaml', P('11 s'), P('13 s'), P('16 s')],
+  ['checkout/add_to_cart.yaml', P('41 s'), P('49 s'), P('58 s')],
+  ['profile_edit.yaml', P('19 s'), P('22 s'), F('8 s')],
+  ['logout.yaml', P('6 s'), P('7 s'), S('not run')],
+];
+document.getElementById('grid').innerHTML = rows.map(r => `<tr><td class="flow">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · UI redesign</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+.page { max-width: 1040px; gap: 20px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.cards a { text-decoration: none; color: inherit; }
+.cards .card { padding: 16px; height: 100%; display: flex; flex-direction: column; gap: 8px; }
+.cards .card:hover { border-color: var(--vscode-focusBorder); }
+ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+li { color: var(--vscode-foreground); }
+.k { color: var(--vscode-descriptionForeground); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header><h1>MoTA UI redesign · draft for review</h1><div class="subtitle">Static mockups with sample data. Use the bar at the top to switch pages and themes. Nothing here is wired to a device.</div></header>
+
+  <section class="card card-pad" style="display: flex; flex-direction: column; gap: 10px">
+    <h2>What is wrong today (all four pages)</h2>
+    <ul>
+      <li><b>No hierarchy.</b> Every button uses the primary blue style, so a page shows 6–20 equally loud buttons. Destructive actions (Uninstall, Clear data, Reboot) look the same as Launch.</li>
+      <li><b>Not VS Code-like.</b> 27 px headings, 28 px padding and large cards read as a web dashboard, not as part of the editor. There are no icons.</li>
+      <li><b>Messages and output are dumped as text</b>: a status line at the top, a “Command output” card always pinned to the bottom, and errors as raw <code>pre</code> blocks.</li>
+      <li><b>Pages redraw themselves completely</b> (Install re-renders all HTML on every progress tick), so focus and typed input get lost.</li>
+    </ul>
+  </section>
+
+  <section class="card card-pad" style="display: flex; flex-direction: column; gap: 10px">
+    <h2>Claude bar, at the bottom of every page</h2>
+    <ul>
+      <li>Ask Claude in plain words: “install the debug build on these phones and check the cart”. It acts through MoTA's own tools (screenshot, tap, install, logcat, shell…) and shows each step as one line with its result.</li>
+      <li>Runs as a Claude Agent SDK session inside the extension using your Claude Code login. The same tools can also be turned on, as an opt-in setting, for Claude Code or Claude Desktop.</li>
+      <li>Permissions: <b>Ask once per task</b> (default: approve a plan, then small steps run freely; data loss asks again), <b>Ask only for data loss</b>, or <b>Read-only</b>.</li><li>Token limit per task with typical sizes: 5–15K quick action, 15–40K one diagnosis, 60–150K writing a flow, 200K+ exploring.</li>
+      <li>The scope chip limits which devices Claude may touch. It follows your selection, or the device you're viewing.</li>
+      <li>The terminal icon switches the same panel to the ADB console.</li>
+    </ul>
+  </section>
+
+  <div class="cards">
+    <a href="farm.html"><div class="card"><span class="k">Device farm</span><h2>Grid of devices with live screens</h2>
+      <ul class="small"><li>Today: 13 identical buttons in the selection bar; the checkbox floats over the screen; the live view is a modal that hides everything.</li><li>New: search + status filter + grid/list, one “Open” per card, a floating bar with 2 main actions + icons + More, ADB console docked at the bottom.</li></ul></div></a>
+    <a href="farm-live.html"><div class="card"><span class="k">Farm · live view</span><h2>Docked live screen, device list stays visible</h2>
+      <ul class="small"><li>Emulator-style side toolbar (power, volume, rotate, back/home/recents, screenshot, record).</li><li>Switch device from the list without closing anything.</li></ul></div></a>
+    <a href="controls.html"><div class="card"><span class="k">Device controls</span><h2>Live screen + tools in tabs</h2>
+      <ul class="small"><li>Today: no live screen; tap/swipe needs typed X/Y numbers; 5 tabs of uniform buttons; shared output box.</li><li>New: click the screen to interact; Apps tab picks from installed apps and shows version; destructive actions in a separate danger area; real Logs, Shell and Files tabs; toasts for results.</li></ul></div></a>
+    <a href="monitor.html"><div class="card"><span class="k">Device monitor</span><h2>Compare devices, then drill in</h2>
+      <ul class="small"><li>Today: one tall card per device with six big numbers, three progress bars and a tiny unlabeled CPU line; options need an Apply button.</li><li>New: one row per device with trend lines and warning flags; a hoverable history chart; options apply immediately; CSV export.</li></ul></div></a>
+    <a href="tests-setup.html"><div class="card"><span class="k">Tests · setup</span><h2>Run Maestro flows on selected phones</h2>
+      <ul class="small"><li>From the farm: select phones → <b>Run tests</b>. Pick flows (Claude suggests the ones your changes touch); every selected flow runs on every selected phone. Tags, variables, install first.</li><li>Device checks with fixes; a token limit for Claude's failure diagnosis.</li></ul></div></a>
+    <a href="tests-run.html"><div class="card"><span class="k">Tests · running</span><h2>Live progress on each phone</h2>
+      <ul class="small"><li>Run banner with totals and Cancel; each card shows “Starting Maestro…” (~40 s), then progress, the current flow and its steps, input blocked.</li><li>Claude classifies failures as they happen: app bug, broken test, flaky test or phone problem, and recovers phone problems.</li></ul></div></a>
+    <a href="tests-results.html"><div class="card"><span class="k">Tests · results</span><h2>Grid of flows × phones, with Claude's summary</h2>
+      <ul class="small"><li>Summary of real failures vs noise, a draft bug report, and a verified flow fix as a diff to apply.</li><li>Failure screenshot, failed assertion and steps, logcat around the failure, rerun failed, previous runs.</li></ul></div></a>
+    <a href="install.html"><div class="card"><span class="k">Install APK</span><h2>See what will change before installing</h2>
+      <ul class="small"><li>Today: a “page or notification?” prompt first, a preset menu plus checkboxes that overlap, 6 buttons in a row, no APK details.</li><li>New: APK summary (version, package, size, SDK); device table shows installed version and what will happen; two clear install modes; advanced options folded away; failures explain the fix inline.</li></ul></div></a>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · Run tests</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+.cols { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.main-col { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.side-col { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.card h2 { margin-bottom: 2px; }
+.flows { border: 1px solid var(--vscode-panel-border); border-radius: 6px; overflow: hidden; }
+.flow { display: flex; align-items: center; gap: 10px; padding: 7px 12px; }
+.flow + .flow { border-top: 1px solid var(--vscode-panel-border); }
+.flow:hover { background: var(--vscode-list-hoverBackground); }
+.flow input { accent-color: var(--vscode-button-background); margin: 0; }
+.flow .name { font-family: var(--vscode-editor-font-family); font-size: 12px; color: var(--mota-heading); }
+.tagchip { font-size: 11px; padding: 0 6px; height: 18px; display: inline-flex; align-items: center; border-radius: 9px; border: 1px solid var(--vscode-widget-border); color: var(--vscode-descriptionForeground); }
+.suggest { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 6px; background: var(--mota-live-bg); color: var(--mota-live-fg); font-size: 12px; }
+.suggest svg.i { margin-top: 1px; }
+.modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.modes label { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; cursor: pointer; }
+.modes label:has(input:checked) { border-color: var(--vscode-focusBorder); background: var(--vscode-list-activeSelectionBackground); }
+.modes input { margin-top: 2px; accent-color: var(--vscode-button-background); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; }
+textarea.input { height: auto; padding: 6px 8px; resize: vertical; font-family: var(--vscode-editor-font-family); font-size: 12px; }
+.checklist { display: flex; flex-direction: column; gap: 8px; }
+.dev-check { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; }
+.dev-check + .dev-check { border-top: 1px solid var(--vscode-panel-border); }
+.dev-check .icon svg.i { width: 18px; height: 18px; }
+.okc { color: var(--vscode-testing-iconPassed); }
+.warnc { color: var(--vscode-editorWarning-foreground); }
+.stat { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+.stat b { color: var(--mota-heading); font-weight: 600; }
+details.cmd summary { cursor: pointer; font-size: 12px; color: var(--vscode-descriptionForeground); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="page-header">
+    <div class="row" style="gap: 12px">
+      <a href="farm.html" class="icon-btn" title="Back to devices" aria-label="Back to devices"><svg data-i="arrowLeft"></svg></a>
+      <div><h1>Run Maestro tests</h1><div class="subtitle">3 devices selected · Maestro 2.11.0 · <span class="mono">~/.maestro/bin/maestro</span></div></div>
+    </div>
+    <div class="row">
+      <span class="small muted">21 flow runs · about 9 min</span>
+      <a class="btn btn-primary" href="tests-run.html" style="text-decoration: none"><svg data-i="play"></svg>Start run</a>
+    </div>
+  </header>
+
+  <div class="cols">
+    <div class="main-col">
+      <section class="card card-pad" style="display: flex; flex-direction: column; gap: 12px">
+        <div class="row" style="justify-content: space-between"><h2>Flows</h2><span class="small muted"><span class="mono">config.yaml</span> · 8 flows · <span class="mono">flows: ["*.yaml", "checkout/*"]</span></span></div>
+        <div class="row" style="flex-wrap: nowrap">
+          <input class="input mono" style="flex: 1; min-width: 0" value=".maestro" aria-label="Flows folder">
+          <button class="btn btn-secondary"><svg data-i="folder"></svg>Browse…</button>
+        </div>
+        <div class="suggest" role="note">
+          <svg data-i="sparkle"></svg>
+          <div style="flex: 1">Claude: your uncommitted changes touch <b>SearchScreen.tsx</b> and <b>CartContext.tsx</b>. These 4 flows cover them.</div>
+          <button class="btn btn-secondary btn-sm">Select only these</button>
+        </div>
+        <div class="flows" id="flows"></div>
+      </section>
+
+      <section class="card card-pad" style="display: flex; flex-direction: column; gap: 12px">
+        <div><h2>Filters and variables</h2><div class="subtitle">Every selected flow runs on every selected phone: 7 flows × 3 phones.</div></div>
+        <div class="grid2">
+          <label class="field"><span>Include tags</span><input class="input" placeholder="e.g. smoke"></label>
+          <label class="field"><span>Exclude tags</span><input class="input" value="slow"></label>
+        </div>
+        <label class="field"><span>Variables (passed as <span class="mono">-e</span>)</span><textarea class="input" rows="2">APP_ID=com.example.shop
+TEST_USER=qa+farm@example.com</textarea></label>
+      </section>
+
+      <section class="card card-pad" style="display: flex; flex-direction: column; gap: 10px">
+        <h2>Before and during the run</h2>
+        <div class="checklist">
+          <label class="check"><input type="checkbox" checked> Install <span class="mono">app-release.apk</span> first <a href="#" class="small">Change</a></label>
+          <label class="check"><input type="checkbox"> Clear app data for <span class="mono">com.example.shop</span></label>
+          <label class="check"><input type="checkbox" checked> Wake phones and keep them awake</label>
+          <label class="check"><input type="checkbox" checked> Save logcat for each phone</label>
+        </div>
+        <div style="height: 1px; background: var(--vscode-panel-border); margin: 4px 0"></div>
+        <div class="row" style="justify-content: space-between">
+          <label class="check"><input type="checkbox" checked> <span><b style="color: var(--mota-heading)">Claude diagnoses failures as they happen</b><br><span class="small muted">Sorts each failure into app bug, flaky test, broken test or phone problem. Reruns flaky flows once. Proposes fixes for you to approve.</span></span></label>
+          <label class="field" style="flex-direction: row; align-items: center; gap: 8px"><span>Limit</span><select class="select"><option>40K · one diagnosis</option><option selected>150K · about 5 diagnoses</option><option>300K · about 10 diagnoses</option><option>Custom…</option></select></label>
+        </div>
+        <details class="cmd"><summary>Command each phone runs</summary><pre class="output" style="margin-top: 8px">maestro --device &lt;serial&gt; test &lt;7 selected flows&gt; --exclude-tags slow \
+  -e APP_ID=com.example.shop -e TEST_USER=… --format junit \
+  --output .mota/test-runs/2026-11-19_10-42/&lt;phone&gt;/report.xml \
+  --test-output-dir .mota/test-runs/2026-11-19_10-42/&lt;phone&gt;/artifacts</pre></details>
+      </section>
+    </div>
+
+    <div class="side-col">
+      <section class="card card-pad">
+        <div class="row" style="justify-content: space-between"><h2>Devices</h2><a href="farm.html" class="small">Change</a></div>
+        <div class="dev-check"><span class="icon okc"><svg data-i="checkCircle"></svg></span><div><div style="color: var(--mota-heading); font-weight: 600">Pixel 8 Pro</div><div class="small muted">USB · screen on · unlocked</div></div></div>
+        <div class="dev-check"><span class="icon okc"><svg data-i="checkCircle"></svg></span><div><div style="color: var(--mota-heading); font-weight: 600">Galaxy S23</div><div class="small muted">Wi-Fi · screen on · unlocked</div></div></div>
+        <div class="dev-check"><span class="icon warnc"><svg data-i="warn"></svg></span><div style="display: flex; flex-direction: column; gap: 6px">
+          <div><div style="color: var(--mota-heading); font-weight: 600">Redmi Note 12</div><div class="small">The screen is locked. Maestro can't get past a lock screen.</div><div class="small muted">MIUI blocks <span class="mono">adb install</span>, so MoTA installs Maestro's driver through the helper.</div></div>
+          <div class="row"><button class="btn btn-secondary btn-sm">Wake &amp; check again</button><button class="btn btn-ghost btn-sm"><svg data-i="sparkle"></svg>Ask Claude</button><button class="btn btn-ghost btn-sm">Leave out</button></div>
+        </div></div>
+        <div class="small muted" style="margin-top: 6px">Phones that fail a check are left out. The others still run.</div>
+      </section>
+      <section class="card card-pad">
+        <h2 style="margin-bottom: 8px">Summary</h2>
+        <div class="stat"><span class="muted">Flows</span><b>7 of 8 (1 excluded: slow)</b></div>
+        <div class="stat"><span class="muted">Devices</span><b>2 ready · 1 needs attention</b></div>
+        <div class="stat"><span class="muted">Flow runs</span><b>21 (7 flows × 3 phones)</b></div>
+        <div class="stat"><span class="muted">Estimated time</span><b>about 9 min, incl. ~40 s Maestro start per phone</b></div>
+        <div class="stat"><span class="muted">Claude limit</span><b>150K tokens</b></div>
+        <div class="stat"><span class="muted">Saved to</span><b class="mono">.mota/test-runs/</b></div>
+      </section>
+    </div>
+  </div>
+</div>
+<section class="ai-dock" data-scope="3 selected devices"></section>
+<script>
+const flows = [['login.yaml', ['smoke'], true], ['onboarding.yaml', ['smoke'], false], ['search.yaml', ['smoke'], true], ['product_detail.yaml', [], true],
+  ['checkout/add_to_cart.yaml', ['checkout'], true], ['checkout/pay_upi.yaml', ['checkout', 'slow'], false], ['profile_edit.yaml', [], false], ['logout.yaml', ['smoke'], false]];
+document.getElementById('flows').innerHTML = flows.map(([n, tags, sug]) => `<label class="flow"><input type="checkbox" ${tags.includes('slow') ? '' : 'checked'} aria-label="${n}"><span class="name">${n}</span>${tags.map(t => `<span class="tagchip">${t}</span>`).join('')}<span class="spacer"></span>${sug ? '<span class="small" style="color:var(--vscode-charts-blue);display:inline-flex;gap:4px;align-items:center"><svg data-i="sparkle" style="width:12px;height:12px"></svg>suggested</span>' : ''}</label>`).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · Device monitor</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+table.cmp { width: 100%; border-collapse: collapse; min-width: 900px; }
+table.cmp th { text-align: left; font-size: 12px; font-weight: 600; color: var(--vscode-descriptionForeground); padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); white-space: nowrap; }
+table.cmp td { padding: 10px 12px; border-bottom: 1px solid var(--vscode-panel-border); vertical-align: middle; }
+table.cmp tbody tr { cursor: pointer; }
+table.cmp tbody tr:hover td { background: var(--vscode-list-hoverBackground); }
+table.cmp tbody tr[aria-selected="true"] td { background: var(--vscode-list-activeSelectionBackground); }
+.cell { display: flex; align-items: center; gap: 10px; }
+.val { font-variant-numeric: tabular-nums; color: var(--mota-heading); font-weight: 600; min-width: 52px; }
+.val small { font-weight: 400; color: var(--vscode-descriptionForeground); }
+.spark { width: 84px; height: 26px; }
+.spark path { fill: none; stroke: var(--vscode-charts-blue); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.flag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--vscode-editorWarning-foreground); }
+.flag svg.i { width: 13px; height: 13px; }
+.chart { position: relative; }
+.chart svg.plot { width: 100%; height: 260px; display: block; }
+.chart .grid line { stroke: var(--vscode-panel-border); stroke-width: 1; }
+.chart .axis text { fill: var(--vscode-descriptionForeground); font-size: 11px; font-family: var(--vscode-font-family); }
+.chart .series { fill: none; stroke: var(--vscode-charts-blue); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .threshold { stroke: var(--vscode-editorWarning-foreground); stroke-dasharray: 4 4; stroke-width: 1; }
+.chart .cross { stroke: var(--vscode-descriptionForeground); stroke-width: 1; }
+.chart .marker { fill: var(--vscode-charts-blue); stroke: var(--vscode-sideBar-background); stroke-width: 2; }
+.tip { position: absolute; pointer-events: none; padding: 6px 10px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border); border-radius: 4px; box-shadow: var(--mota-shadow); font-size: 12px; white-space: nowrap; }
+.tip b { color: var(--mota-heading); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="page-header">
+    <div>
+      <h1>Performance monitor</h1>
+      <div class="subtitle"><span class="dot live" style="display:inline-block;margin-right:6px"></span>Live · 3 devices · every 2 s · updated 10:42:31</div>
+    </div>
+    <div class="row">
+      <label class="field" style="flex-direction: row; align-items: center; gap: 8px"><span>App</span>
+        <select class="select" aria-label="App to measure"><option>com.example.shop</option><option>com.example.shop.staging</option><option>No app (device only)</option></select></label>
+      <div class="seg" role="group" aria-label="Sample interval"><button aria-pressed="false">1 s</button><button aria-pressed="true">2 s</button><button aria-pressed="false">5 s</button><button aria-pressed="false">10 s</button></div>
+      <button class="btn btn-secondary"><svg data-i="pause"></svg>Pause</button>
+      <button class="btn btn-secondary"><svg data-i="download"></svg>Export CSV</button>
+    </div>
+  </header>
+
+  <div class="card" style="overflow-x: auto">
+    <table class="cmp" aria-label="Current metrics per device. Select a row for its history.">
+      <thead><tr><th>Device</th><th>CPU</th><th>Device memory</th><th>App memory</th><th>Frames</th><th>Battery</th><th>Temperature</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <section class="card card-pad" style="display: flex; flex-direction: column; gap: 12px">
+    <div class="row" style="justify-content: space-between">
+      <div><h2 id="detailTitle">Pixel 8 Pro · CPU</h2><div class="subtitle" id="detailSub">Last 2 minutes · Android-reported total CPU %</div></div>
+      <div class="seg" role="group" aria-label="Metric" id="metric">
+        <button aria-pressed="true" data-m="cpu">CPU</button><button aria-pressed="false" data-m="mem">Memory</button><button aria-pressed="false" data-m="app">App memory</button><button aria-pressed="false" data-m="jank">Jank</button><button aria-pressed="false" data-m="temp">Temperature</button>
+      </div>
+    </div>
+    <div class="chart" id="chart"></div>
+    <details><summary class="small muted" style="cursor:pointer">Show data table</summary><div id="dataTable" class="small" style="margin-top:8px;max-height:180px;overflow:auto"></div></details>
+  </section>
+
+  <details class="card card-pad"><summary style="cursor: pointer; font-weight: 600; color: var(--mota-heading)">Raw diagnostics</summary><pre class="output" style="margin-top: 10px">Pixel 8 Pro · dumpsys cpuinfo
+Load: 3.1 / 2.8 / 2.6
+CPU usage from 4812ms to 2311ms ago:
+  31% 12873/com.example.shop: 24% user + 7% kernel
+  8.2% 1532/system_server: 5% user + 3.2% kernel
+34% TOTAL: 25% user + 8.1% kernel + 0.4% iowait</pre></details>
+</div>
+<section class="ai-dock" data-scope="3 monitored devices"></section>
+
+<script>
+// Deterministic sample data so the mockup looks the same on every load.
+function series(seed, base, amp, n = 60) { let x = seed; return Array.from({ length: n }, (_, i) => { x = (x * 9301 + 49297) % 233280; return Math.max(0, base + Math.sin(i / 6 + seed) * amp + (x / 233280 - .5) * amp); }); }
+const devs = [
+  { name: 'Pixel 8 Pro', sub: 'Android 15 · USB', cpu: series(1, 34, 10), mem: series(2, 66, 3), app: series(3, 212, 14), fps: '59 fps', jank: series(4, 3, 2), battery: '82% · charging', temp: series(5, 31.4, 1) },
+  { name: 'Galaxy S23', sub: 'Android 14 · Wi-Fi', cpu: series(6, 48, 14), mem: series(7, 71, 4), app: series(8, 248, 20), fps: '44 fps', jank: series(9, 18, 5), jankFlag: 'Janky', battery: '64%', temp: series(10, 36.2, 1.5) },
+  { name: 'Redmi Note 12', sub: 'Android 13 · Wi-Fi', cpu: series(11, 61, 12), mem: series(12, 79, 4), app: series(13, 230, 18), fps: '52 fps', jank: series(14, 7, 3), battery: '18% · low', batteryFlag: 'Low', temp: series(15, 44.2, 1), tempFlag: 'Hot' },
+];
+const METRICS = { cpu: ['CPU', '%', 100, 80, 'Android-reported total CPU %'], mem: ['Memory', '%', 100, 90, 'Device memory in use'], app: ['App memory', 'MB', 400, null, 'App PSS from dumpsys meminfo'], jank: ['Jank', '%', 40, 10, 'Share of janky frames (gfxinfo)'], temp: ['Temperature', '°C', 50, 42, 'Battery temperature'] };
+let current = 0, metric = 'cpu';
+const last = a => a[a.length - 1];
+function spark(values, max) { const w = 84, h = 26; return `<svg class="spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Trend"><path d="${values.map((v, i) => `${i ? 'L' : 'M'}${(i / (values.length - 1) * (w - 2) + 1).toFixed(1)},${(h - 2 - Math.min(1, v / max) * (h - 4)).toFixed(1)}`).join('')}"/></svg>`; }
+const flag = text => text ? `<span class="flag"><svg data-i="warn"></svg>${text}</span>` : '';
+function rows() {
+  document.getElementById('rows').innerHTML = devs.map((d, i) => `<tr aria-selected="${i === current}" data-i="${i}">
+    <td><div style="font-weight:600;color:var(--mota-heading)">${d.name}</div><div class="small muted">${d.sub}</div></td>
+    <td><div class="cell"><span class="val">${last(d.cpu).toFixed(0)}<small>%</small></span>${spark(d.cpu, 100)}</div></td>
+    <td><div class="cell"><span class="val">${last(d.mem).toFixed(0)}<small>%</small></span>${spark(d.mem, 100)}</div></td>
+    <td><div class="cell"><span class="val">${last(d.app).toFixed(0)}<small> MB</small></span>${spark(d.app, 400)}</div></td>
+    <td><div class="cell"><span class="val">${d.fps}</span><span class="small muted">${last(d.jank).toFixed(0)}% janky</span>${flag(d.jankFlag)}</div></td>
+    <td><div class="cell"><span class="val" style="font-weight:400">${d.battery}</span>${flag(d.batteryFlag)}</div></td>
+    <td><div class="cell"><span class="val">${last(d.temp).toFixed(1)}<small> °C</small></span>${flag(d.tempFlag)}</div></td>
+    <td style="text-align:right"><button class="icon-btn" aria-label="Remove ${d.name} from monitor" title="Remove"><svg data-i="close"></svg></button></td>
+  </tr>`).join('');
+  drawIcons();
+}
+function chart() {
+  const d = devs[current], [label, unit, max, warn, desc] = METRICS[metric], values = d[metric];
+  document.getElementById('detailTitle').textContent = `${d.name} · ${label}`;
+  document.getElementById('detailSub').textContent = 'Last 2 minutes · ' + desc;
+  const W = 1000, H = 260, L = 44, R = 12, T = 12, B = 26, pw = W - L - R, ph = H - T - B;
+  const x = i => L + i / (values.length - 1) * pw, y = v => T + ph - Math.min(1, v / max) * ph;
+  const ticks = [0, .25, .5, .75, 1].map(f => f * max);
+  const svg = `<svg class="plot" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${label} over the last 2 minutes for ${d.name}">
+    <g class="grid">${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/>`).join('')}</g>
+    <g class="axis">${ticks.map(t => `<text x="${L - 8}" y="${y(t) + 4}" text-anchor="end">${t.toFixed(0)}${unit === '%' ? '%' : ''}</text>`).join('')}
+      ${[0, 15, 30, 45, 59].map(i => `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${i === 59 ? 'now' : '−' + ((59 - i) * 2) + ' s'}</text>`).join('')}</g>
+    ${warn ? `<line class="threshold" x1="${L}" x2="${W - R}" y1="${y(warn)}" y2="${y(warn)}"/>` : ''}
+    <path class="series" d="${values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('')}"/>
+    <line class="cross" id="cross" y1="${T}" y2="${T + ph}" x1="-10" x2="-10"/>
+    <circle class="marker" id="marker" r="5" cx="-10" cy="-10"/>
+  </svg>`;
+  const el = document.getElementById('chart');
+  el.innerHTML = svg + '<div class="tip" id="tip" hidden></div>' + (warn ? `<div class="small muted" style="display:flex;gap:6px;align-items:center;margin-top:6px"><svg width="22" height="6" aria-hidden="true"><line x1="0" x2="22" y1="3" y2="3" stroke="var(--vscode-editorWarning-foreground)" stroke-dasharray="4 4"/></svg>Warning above ${warn}${unit === '%' ? '%' : ' ' + unit}</div>` : '');
+  const plot = el.querySelector('svg.plot'), tip = el.querySelector('#tip');
+  plot.addEventListener('mousemove', e => {
+    const r = plot.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width * W;
+    const i = Math.max(0, Math.min(values.length - 1, Math.round((fx - L) / pw * (values.length - 1))));
+    el.querySelector('#cross').setAttribute('x1', x(i)); el.querySelector('#cross').setAttribute('x2', x(i));
+    el.querySelector('#marker').setAttribute('cx', x(i)); el.querySelector('#marker').setAttribute('cy', y(values[i]));
+    tip.hidden = false; tip.innerHTML = `<span class="muted">${i === 59 ? 'now' : '−' + ((59 - i) * 2) + ' s'}</span> · <b>${values[i].toFixed(1)} ${unit}</b>`;
+    const px = x(i) / W * r.width; tip.style.left = Math.min(r.width - 140, px + 12) + 'px'; tip.style.top = (y(values[i]) / H * r.height - 34) + 'px';
+  });
+  plot.addEventListener('mouseleave', () => { tip.hidden = true; el.querySelector('#cross').setAttribute('x1', -10); el.querySelector('#cross').setAttribute('x2', -10); el.querySelector('#marker').setAttribute('cx', -10); });
+  document.getElementById('dataTable').innerHTML = `<table class="cmp" style="min-width:0"><thead><tr><th>Time</th><th>${label} (${unit})</th></tr></thead><tbody>${values.slice(-12).reverse().map((v, k) => `<tr><td>${k ? '−' + k * 2 + ' s' : 'now'}</td><td>${v.toFixed(1)}</td></tr>`).join('')}</tbody></table>`;
+}
+document.addEventListener('click', e => {
+  const tr = e.target.closest('#rows tr'); if (tr && !e.target.closest('button')) { current = +tr.dataset.i; rows(); chart(); }
+  const m = e.target.closest('#metric button'); if (m) { metric = m.dataset.m; document.querySelectorAll('#metric button').forEach(b => b.setAttribute('aria-pressed', String(b === m))); chart(); }
+});
+document.addEventListener('DOMContentLoaded', () => { rows(); chart(); });
+</script>
+</body>
+</html>

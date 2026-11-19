@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · Device farm</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+.farm { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 16px; }
+.dev { background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-panel-border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+.dev.selected { border-color: var(--vscode-focusBorder); box-shadow: 0 0 0 1px var(--vscode-focusBorder); }
+.dev .stage { position: relative; height: 292px; background: var(--mota-stage); display: flex; align-items: center; justify-content: center; padding: 16px 14px; }
+.dev .stage.clickable { cursor: pointer; }
+.dev .stage .phone { height: 100%; }
+.dev .stage .pill { position: absolute; top: 10px; left: 10px; }
+.dev .pick { position: absolute; top: 9px; right: 9px; width: 18px; height: 18px; margin: 0; accent-color: var(--vscode-button-background); cursor: pointer; opacity: 0; transition: opacity .12s; }
+.dev:hover .pick, .dev .pick:checked, .dev .pick:focus-visible, body.selecting .dev .pick { opacity: 1; }
+.dev .state { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; max-width: 190px; }
+.dev .state svg.i { width: 28px; height: 28px; stroke-width: 1.1; }
+.dev .meta { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+.dev .name { font-weight: 600; color: var(--mota-heading); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chips { display: flex; gap: 12px; flex-wrap: wrap; }
+.low { color: var(--vscode-editorWarning-foreground); }
+table.list { width: 100%; border-collapse: collapse; }
+table.list th { text-align: left; font-weight: 600; font-size: 12px; color: var(--vscode-descriptionForeground); padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
+table.list td { padding: 8px 10px; border-bottom: 1px solid var(--vscode-panel-border); vertical-align: middle; }
+table.list tr.selected td { background: var(--vscode-list-activeSelectionBackground); }
+table.list tr:hover td { background: var(--vscode-list-hoverBackground); }
+.thumb { width: 26px; height: 54px; border-radius: 5px; border: 2px solid var(--mota-bezel); overflow: hidden; display: flex; flex-direction: column; background: #fafafa; }
+.thumb span { height: 10px; background: var(--accent); }
+.console { border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); position: sticky; bottom: 0; }
+.console-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: transparent; border: 0; color: var(--vscode-foreground); font: inherit; cursor: pointer; text-align: left; }
+.console-body { padding: 0 16px 12px; display: none; }
+.console.open .console-body { display: block; }
+.console.open .chev { transform: rotate(90deg); }
+#bar { bottom: 96px; }
+.empty { padding: 48px 24px; text-align: center; border: 1px dashed var(--vscode-widget-border); border-radius: 8px; }
+</style>
+</head>
+<body>
+<div class="page" style="min-height: calc(100vh - 80px)">
+  <header class="page-header">
+    <div>
+      <h1>Devices</h1>
+      <div class="subtitle">4 ready · 1 needs attention · 1 offline</div>
+    </div>
+    <div class="row">
+      <button class="btn btn-secondary"><svg data-i="refresh"></svg>Refresh</button>
+      <button class="btn btn-primary"><svg data-i="plus"></svg>Add device</button>
+    </div>
+  </header>
+
+  <div class="row" style="gap: 10px">
+    <label class="search" style="flex: 1 1 260px; max-width: 360px"><svg data-i="search"></svg><input id="q" placeholder="Search name, model, Android version, serial" aria-label="Search devices"></label>
+    <div class="seg" role="group" aria-label="Filter by status" id="filter">
+      <button aria-pressed="true" data-f="all">All <span class="count">6</span></button>
+      <button aria-pressed="false" data-f="ready">Ready <span class="count">4</span></button>
+      <button aria-pressed="false" data-f="attention">Needs attention <span class="count">1</span></button>
+      <button aria-pressed="false" data-f="offline">Offline <span class="count">1</span></button>
+    </div>
+    <div class="spacer"></div>
+    <label class="check small"><input type="checkbox" checked> Live screens</label>
+    <div class="seg" role="group" aria-label="Layout" id="layout">
+      <button aria-pressed="true" data-l="grid" aria-label="Grid view" title="Grid"><svg data-i="grid"></svg></button>
+      <button aria-pressed="false" data-l="list" aria-label="List view" title="List"><svg data-i="list"></svg></button>
+    </div>
+  </div>
+
+  <div id="view"></div>
+
+  <div class="floating-bar" id="bar" role="toolbar" aria-label="Actions for selected devices" hidden>
+    <span style="font-weight: 600; color: var(--mota-heading); margin-right: 6px" id="selcount"></span>
+    <a class="btn btn-primary" href="tests-setup.html" style="text-decoration:none"><svg data-i="flask"></svg>Run tests</a>
+    <button class="btn btn-secondary"><svg data-i="package"></svg>Install APK</button>
+    <button class="btn btn-secondary"><svg data-i="play"></svg>Launch app</button>
+    <span class="divider"></span>
+    <button class="icon-btn" title="Back" aria-label="Back"><svg data-i="back"></svg></button>
+    <button class="icon-btn" title="Home" aria-label="Home"><svg data-i="home"></svg></button>
+    <button class="icon-btn" title="Wake / sleep" aria-label="Wake or sleep"><svg data-i="power"></svg></button>
+    <button class="icon-btn" title="Screenshot all" aria-label="Screenshot all"><svg data-i="camera"></svg></button>
+    <span class="divider"></span>
+    <button class="btn btn-ghost" title="Monitor, logs, keep awake, disconnect, reboot">More<svg data-i="chevronDown"></svg></button>
+    <button class="icon-btn" title="Clear selection (Esc)" aria-label="Clear selection" id="clear"><svg data-i="close"></svg></button>
+  </div>
+</div>
+
+<section class="ai-dock" data-scope="2 selected devices"></section>
+
+<script>
+const devices = [
+  { id: 'pixel', name: 'Pixel 8 Pro', sub: 'Google · Android 15', conn: 'USB', battery: '82%', charging: true, res: '1344 × 2992', kind: 'ready', accent: '#3b6fb6' },
+  { id: 's23', name: 'Galaxy S23', sub: 'Samsung · Android 14', conn: 'Wi-Fi', battery: '64%', res: '1080 × 2340', kind: 'ready', accent: '#5a4b8a', dark: true },
+  { id: 'nokia', name: 'Nokia 5.4', sub: 'HMD · Android 12', conn: 'USB', battery: '91%', res: '720 × 1560', kind: 'inuse', accent: '#2f7a57' },
+  { id: 'redmi', name: 'Redmi Note 12', sub: 'Xiaomi · Android 13', conn: 'Wi-Fi', battery: '18%', low: true, res: '1080 × 2400', kind: 'ready', accent: '#a45a2a' },
+  { id: 'a54', name: 'Galaxy A54', sub: 'Samsung · R5CW31…', conn: 'USB', kind: 'attention' },
+  { id: 'p6a', name: 'Pixel 6a', sub: 'Google · Android 14', conn: 'Wi-Fi', kind: 'offline' },
+];
+const STATUS = { ready: ['Ready', 'ready'], inuse: ['In use · live', 'live'], attention: ['Unauthorized', 'warn'], offline: ['Offline', 'off'] };
+const selected = new Set(['pixel', 's23']);
+let filter = 'all', layout = 'grid';
+const online = d => d.kind === 'ready' || d.kind === 'inuse';
+const shown = () => {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  return devices.filter(d => (filter === 'all' || (filter === 'ready' ? online(d) : d.kind === filter)) && (!q || (d.name + d.sub + d.conn).toLowerCase().includes(q)));
+};
+const connIcon = d => `<svg data-i="${d.conn === 'USB' ? 'usb' : 'wifi'}"></svg>`;
+const battery = d => `<span class="chip ${d.low ? 'low' : ''}"><svg data-i="${d.charging ? 'bolt' : 'battery'}"></svg>${d.battery}${d.charging ? ' · charging' : d.low ? ' · low' : ''}</span>`;
+function card(d) {
+  const [label, dot] = STATUS[d.kind];
+  const stage = online(d)
+    ? `<div class="phone ${d.dark ? 'dark' : ''}" style="--accent:${d.accent}"><div class="bar"></div><div class="blk"></div><div class="ln" style="width:70%"></div><div class="ln"></div><div class="ln" style="width:55%"></div><div class="blk" style="height:14%"></div></div>`
+    : d.kind === 'attention'
+      ? `<div class="state"><svg data-i="warn" style="color:var(--vscode-editorWarning-foreground)"></svg><div style="font-weight:600;color:var(--mota-heading)">Waiting for authorization</div><div class="small muted">Unlock the phone and tap <b>Allow</b> on the USB debugging prompt.</div></div>`
+      : `<div class="state"><svg data-i="wifiOff" class="muted"></svg><div style="font-weight:600;color:var(--mota-heading)">Not connected</div><div class="small muted">Last seen 2 h ago at 192.168.1.42</div><button class="btn btn-secondary">Reconnect</button></div>`;
+  return `<article class="dev ${selected.has(d.id) ? 'selected' : ''}" data-id="${d.id}">
+    <div class="stage ${online(d) ? 'clickable' : ''}" ${online(d) ? 'title="Open live view"' : ''}>${stage}
+      <span class="pill"><span class="dot ${dot}"></span>${label}</span>
+      ${online(d) ? `<input type="checkbox" class="pick" aria-label="Select ${d.name}" ${selected.has(d.id) ? 'checked' : ''}>` : ''}
+    </div>
+    <div class="meta">
+      <div class="row" style="justify-content:space-between;flex-wrap:nowrap">
+        <div style="min-width:0"><div class="name">${d.name}</div><div class="small muted">${d.sub}</div></div>
+        ${online(d) ? '<button class="btn btn-secondary btn-sm">Open</button>' : '<button class="icon-btn" aria-label="More actions"><svg data-i="more"></svg></button>'}
+      </div>
+      <div class="chips"><span class="chip">${connIcon(d)}${d.conn}</span>${online(d) ? battery(d) + `<span class="chip">${d.res}</span>` : ''}</div>
+    </div>
+  </article>`;
+}
+function row(d) {
+  const [label, dot] = STATUS[d.kind];
+  return `<tr class="${selected.has(d.id) ? 'selected' : ''}" data-id="${d.id}">
+    <td style="width:32px">${online(d) ? `<input type="checkbox" class="pick" style="opacity:1;position:static" aria-label="Select ${d.name}" ${selected.has(d.id) ? 'checked' : ''}>` : ''}</td>
+    <td style="width:40px"><div class="thumb" style="--accent:${online(d) ? d.accent : '#555'}"><span></span></div></td>
+    <td><div class="name" style="font-weight:600;color:var(--mota-heading)">${d.name}</div><div class="small muted">${d.sub}</div></td>
+    <td><span class="status"><span class="dot ${dot}"></span>${label}</span></td>
+    <td><span class="chip">${connIcon(d)}${d.conn}</span></td>
+    <td>${online(d) ? battery(d) : '<span class="muted">—</span>'}</td>
+    <td class="muted">${d.res || '—'}</td>
+    <td style="text-align:right">${online(d) ? '<button class="btn btn-secondary btn-sm">Open</button>' : d.kind === 'offline' ? '<button class="btn btn-secondary btn-sm">Reconnect</button>' : ''}</td>
+  </tr>`;
+}
+function render() {
+  const list = shown();
+  const view = document.getElementById('view');
+  if (!list.length) view.innerHTML = '<div class="empty"><h2>No devices match</h2><p class="muted">Clear the search or filter.</p></div>';
+  else if (layout === 'grid') view.innerHTML = `<div class="farm">${list.map(card).join('')}</div>`;
+  else view.innerHTML = `<div class="card" style="overflow-x:auto"><table class="list"><thead><tr><th></th><th></th><th>Device</th><th>Status</th><th>Connection</th><th>Battery</th><th>Resolution</th><th></th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`;
+  document.body.classList.toggle('selecting', selected.size > 0);
+  document.getElementById('bar').hidden = !selected.size;
+  document.getElementById('selcount').textContent = selected.size + ' selected';
+  drawIcons();
+}
+document.addEventListener('change', e => {
+  if (!e.target.classList.contains('pick')) return;
+  const id = e.target.closest('[data-id]').dataset.id;
+  e.target.checked ? selected.add(id) : selected.delete(id);
+  render();
+});
+document.addEventListener('click', e => {
+  const f = e.target.closest('#filter button'); if (f) { filter = f.dataset.f; document.querySelectorAll('#filter button').forEach(b => b.setAttribute('aria-pressed', String(b === f))); render(); }
+  const l = e.target.closest('#layout button'); if (l) { layout = l.dataset.l; document.querySelectorAll('#layout button').forEach(b => b.setAttribute('aria-pressed', String(b === l))); render(); }
+  if (e.target.closest('#clear')) { selected.clear(); render(); }
+  if (e.target.closest('.stage.clickable') && !e.target.closest('.pick')) location.href = 'farm-live.html';
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { selected.clear(); render(); } });
+document.addEventListener('DOMContentLoaded', () => { document.getElementById('q').addEventListener('input', render); render(); });
+</script>
+</body>
+</html>

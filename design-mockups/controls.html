@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · Device controls</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--vscode-panel-border); }
+.layout { display: flex; flex-wrap: wrap; align-items: stretch; min-height: calc(100vh - 136px); }
+.left { flex: 0 1 420px; min-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 20px; background: var(--mota-stage); align-self: stretch; }
+.left .screenrow { display: flex; gap: 12px; align-items: flex-start; }
+.left .phone { height: min(600px, calc(100vh - 230px)); min-height: 400px; border-width: 5px; border-radius: 22px; gap: 4%; cursor: crosshair; }
+.devtools { display: flex; flex-direction: column; gap: 2px; padding: 5px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; }
+.devtools hr { width: 100%; border: 0; border-top: 1px solid var(--vscode-widget-border); margin: 4px 0; }
+.right { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; }
+.panel { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+.panel[hidden] { display: none; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 12px; }
+.kv dt { color: var(--vscode-descriptionForeground); }
+.kv dd { margin: 0; color: var(--mota-heading); }
+.danger { border: 1px solid var(--mota-danger-border); border-radius: 8px; }
+.danger .item { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 16px; }
+.danger .item + .item { border-top: 1px solid var(--mota-danger-border); }
+.applist { max-height: 220px; overflow: auto; border-top: 1px solid var(--vscode-panel-border); }
+.appitem { display: flex; gap: 10px; align-items: center; padding: 7px 12px; width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.appitem:hover { background: var(--vscode-list-hoverBackground); }
+.appitem[aria-selected="true"] { background: var(--vscode-list-activeSelectionBackground); }
+.appicon { width: 28px; height: 28px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 12px; flex: none; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.shot { border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: var(--vscode-sideBar-background); padding: 6px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.shot[aria-selected="true"] { border-color: var(--vscode-focusBorder); box-shadow: 0 0 0 1px var(--vscode-focusBorder); }
+.shot .phone { width: 100%; height: auto; border-width: 2px; border-radius: 6px; }
+.log { font-family: var(--vscode-editor-font-family); font-size: 12px; line-height: 1.55; background: var(--vscode-textCodeBlock-background); border-radius: 6px; padding: 8px 0; max-height: 440px; overflow: auto; }
+.log div { padding: 0 12px; white-space: pre; }
+.log .E { color: var(--vscode-errorForeground); }
+.log .W { color: var(--vscode-editorWarning-foreground); }
+.log .D { color: var(--vscode-descriptionForeground); }
+.term { background: var(--vscode-textCodeBlock-background); border-radius: 6px; font-family: var(--vscode-editor-font-family); font-size: 12px; }
+.term pre { margin: 0; padding: 12px; max-height: 360px; overflow: auto; white-space: pre-wrap; }
+.term form { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--vscode-panel-border); padding: 8px 12px; }
+.term input { flex: 1; background: transparent; border: 0; color: var(--vscode-foreground); font: inherit; outline: none; }
+table.files { width: 100%; border-collapse: collapse; }
+table.files td, table.files th { padding: 7px 10px; border-bottom: 1px solid var(--vscode-panel-border); text-align: left; }
+table.files th { font-size: 12px; color: var(--vscode-descriptionForeground); font-weight: 600; }
+table.files tr:hover td { background: var(--vscode-list-hoverBackground); }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat .v { font-size: 22px; font-weight: 600; color: var(--mota-heading); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="row" style="gap: 12px">
+    <a href="farm.html" class="icon-btn" title="All devices" aria-label="All devices"><svg data-i="arrowLeft"></svg></a>
+    <div>
+      <div class="row" style="gap: 10px"><h1 style="font-size: 16px">Pixel 8 Pro</h1><span class="status"><span class="dot ready"></span>Ready</span></div>
+      <div class="subtitle">Google · Android 15 (API 35) · USB · 82% charging · 35161FDH2000GD</div>
+    </div>
+  </div>
+  <div class="row" style="gap: 6px">
+    <button class="btn btn-secondary"><svg data-i="camera"></svg>Screenshot</button>
+    <button class="btn btn-secondary"><svg data-i="record" style="color: var(--vscode-errorForeground)"></svg>Record</button>
+    <button class="icon-btn" title="Keep awake, reboot, disconnect, set up helper" aria-label="More device actions"><svg data-i="more"></svg></button>
+  </div>
+</header>
+
+<div class="layout">
+  <section class="left" aria-label="Live screen">
+    <div class="screenrow">
+      <div class="phone" style="--accent:#3b6fb6" role="img" aria-label="Live screen. Click to tap, drag to swipe.">
+        <div class="bar" style="height: 10%"></div><div class="blk" style="height: 20%"></div><div class="ln" style="width: 70%; height: 2.5%"></div><div class="ln" style="height: 2.5%"></div><div class="ln" style="width: 55%; height: 2.5%"></div><div class="blk" style="height: 12%"></div><div class="blk" style="height: 12%"></div>
+      </div>
+      <div class="devtools" role="toolbar" aria-orientation="vertical" aria-label="Device buttons">
+        <button class="tool" title="Power" aria-label="Power"><svg data-i="power"></svg></button>
+        <button class="tool" title="Volume up" aria-label="Volume up"><svg data-i="volUp"></svg></button>
+        <button class="tool" title="Volume down" aria-label="Volume down"><svg data-i="volDown"></svg></button>
+        <button class="tool" title="Rotate" aria-label="Rotate"><svg data-i="rotate"></svg></button>
+        <hr>
+        <button class="tool" title="Back" aria-label="Back"><svg data-i="back"></svg></button>
+        <button class="tool" title="Home" aria-label="Home"><svg data-i="home"></svg></button>
+        <button class="tool" title="Recent apps" aria-label="Recent apps"><svg data-i="recents"></svg></button>
+      </div>
+    </div>
+    <div class="row small muted" style="gap: 6px"><span class="dot live"></span>Live · 60 fps · click to tap, drag to swipe</div>
+    <form class="row" style="width: 100%; max-width: 340px; flex-wrap: nowrap" onsubmit="return false">
+      <label class="search" style="flex: 1"><svg data-i="keyboard"></svg><input placeholder="Type on device" aria-label="Text to type on the device"></label>
+      <button class="btn btn-secondary">Send</button>
+    </form>
+  </section>
+
+  <section class="right">
+    <nav class="tabs" role="tablist" aria-label="Device tools" style="padding: 0 16px">
+      <button role="tab" aria-selected="true" data-tab="apps">Apps</button>
+      <button role="tab" aria-selected="false" data-tab="capture">Captures</button>
+      <button role="tab" aria-selected="false" data-tab="logs">Logs</button>
+      <button role="tab" aria-selected="false" data-tab="diag">Diagnostics</button>
+      <button role="tab" aria-selected="false" data-tab="shell">Shell</button>
+      <button role="tab" aria-selected="false" data-tab="files">Files</button>
+    </nav>
+
+    <!-- APPS -->
+    <div class="panel" data-panel="apps">
+      <div class="card">
+        <div style="padding: 12px">
+          <label class="search"><svg data-i="search"></svg><input value="shop" aria-label="Find an installed app"></label>
+        </div>
+        <div class="applist" role="listbox" aria-label="Installed apps">
+          <button class="appitem" role="option" aria-selected="true"><span class="appicon" style="background:#2f6fb6">ES</span><span style="flex:1;min-width:0"><span style="display:block;color:var(--mota-heading);font-weight:600">Example Shop</span><span class="small muted mono">com.example.shop</span></span><span class="small muted">2.4.1 (241)</span></button>
+          <button class="appitem" role="option" aria-selected="false"><span class="appicon" style="background:#6a4fa0">ES</span><span style="flex:1;min-width:0"><span style="display:block;color:var(--mota-heading);font-weight:600">Example Shop (staging)</span><span class="small muted mono">com.example.shop.staging</span></span><span class="small muted">2.5.0-rc1</span></button>
+        </div>
+      </div>
+
+      <div class="card card-pad" style="display: flex; flex-direction: column; gap: 14px">
+        <div class="row" style="justify-content: space-between">
+          <div class="row" style="gap: 10px"><span class="appicon" style="background:#2f6fb6;width:36px;height:36px;border-radius:9px">ES</span><div><h2>Example Shop</h2><div class="small muted mono">com.example.shop</div></div></div>
+          <span class="status small"><span class="dot ready"></span>Running · pid 12873</span>
+        </div>
+        <dl class="kv">
+          <dt>Version</dt><dd>2.4.1 (241) · debuggable</dd>
+          <dt>Installed</dt><dd>2 days ago · updated today 10:42</dd>
+          <dt>Target / min SDK</dt><dd>35 / 26</dd>
+        </dl>
+        <div class="row">
+          <button class="btn btn-primary"><svg data-i="play"></svg>Launch</button>
+          <button class="btn btn-secondary">Restart</button>
+          <button class="btn btn-secondary">Force stop</button>
+          <button class="btn btn-ghost">App info on device</button>
+        </div>
+      </div>
+
+      <div class="card card-pad" style="display: flex; flex-direction: column; gap: 10px">
+        <h2>Open a deep link</h2>
+        <div class="row" style="flex-wrap: nowrap">
+          <input class="input mono" style="flex: 1; min-width: 0" placeholder="myapp://product/123" aria-label="Deep link URI">
+          <button class="btn btn-secondary"><svg data-i="link"></svg>Open</button>
+        </div>
+        <div class="row small muted"><span>Recent:</span><a href="#">shop://cart</a><a href="#">shop://product/8812</a></div>
+      </div>
+
+      <div class="danger" role="group" aria-label="Destructive actions">
+        <div class="item"><div><h3>Clear app data</h3><div class="small muted">Deletes accounts, databases and settings for this app.</div></div><button class="btn btn-danger">Clear data…</button></div>
+        <div class="item"><div><h3>Uninstall</h3><div class="small muted">Removes the app for all users on this device.</div></div><button class="btn btn-danger"><svg data-i="trash"></svg>Uninstall…</button></div>
+      </div>
+    </div>
+
+    <!-- CAPTURES -->
+    <div class="panel" data-panel="capture" hidden>
+      <div class="row">
+        <button class="btn btn-primary"><svg data-i="camera"></svg>Take screenshot</button>
+        <button class="btn btn-secondary"><svg data-i="record" style="color: var(--vscode-errorForeground)"></svg>Start recording</button>
+        <div class="spacer"></div>
+        <button class="btn btn-ghost"><svg data-i="folder"></svg>Open folder</button>
+      </div>
+      <div class="row" style="align-items: flex-start; gap: 20px">
+        <div style="flex: 0 0 220px">
+          <div class="phone" style="--accent:#3b6fb6; width: 220px; height: auto; border-width: 3px"><div class="bar"></div><div class="blk"></div><div class="ln" style="width:70%"></div><div class="ln"></div><div class="blk" style="height:14%"></div></div>
+        </div>
+        <div style="flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 10px">
+          <h2>screenshot-10-42-18.png</h2>
+          <div class="small muted">Today 10:42 · 1344 × 2992 · 1.2 MB</div>
+          <div class="row"><button class="btn btn-secondary"><svg data-i="copy"></svg>Copy image</button><button class="btn btn-secondary"><svg data-i="download"></svg>Save as…</button><button class="btn btn-ghost">Reveal</button></div>
+        </div>
+      </div>
+      <h2 class="section-title">Recent captures</h2>
+      <div class="gallery" id="gallery"></div>
+    </div>
+
+    <!-- LOGS -->
+    <div class="panel" data-panel="logs" hidden>
+      <div class="row">
+        <div class="seg" role="group" aria-label="Minimum level"><button aria-pressed="false">Verbose</button><button aria-pressed="false">Debug</button><button aria-pressed="true">Info</button><button aria-pressed="false">Warn</button><button aria-pressed="false">Error</button></div>
+        <label class="search" style="flex: 1 1 200px"><svg data-i="search"></svg><input placeholder="Filter tag or text" aria-label="Filter logs"></label>
+        <label class="check small"><input type="checkbox" checked> Only com.example.shop</label>
+        <button class="btn btn-secondary"><svg data-i="pause"></svg>Pause</button>
+        <button class="icon-btn" title="Clear" aria-label="Clear logs"><svg data-i="trash"></svg></button>
+      </div>
+      <div class="log" role="log" aria-label="Logcat">
+        <div class="D">10:42:18.201 D ReactNativeJS  Rendering ProductList (24 items)</div>
+        <div>10:42:18.344 I ActivityManager  Displayed com.example.shop/.MainActivity: +412ms</div>
+        <div class="W">10:42:19.002 W OkHttp  Slow response 1840 ms GET /api/products</div>
+        <div>10:42:19.110 I ReactNativeJS  Cart restored with 3 items</div>
+        <div class="E">10:42:21.877 E ReactNativeJS  TypeError: undefined is not an object (evaluating 'item.price.amount')</div>
+        <div class="E">10:42:21.878 E ReactNativeJS      at ProductRow (ProductRow.tsx:42:18)</div>
+        <div>10:42:22.010 I Choreographer  Skipped 31 frames</div>
+      </div>
+    </div>
+
+    <!-- DIAGNOSTICS -->
+    <div class="panel" data-panel="diag" hidden>
+      <div class="row" style="justify-content: space-between"><h2>Device health</h2><a class="btn btn-secondary" href="monitor.html" style="text-decoration:none"><svg data-i="activity"></svg>Open live monitor</a></div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px">
+        <div class="card card-pad stat"><span class="small muted">Battery</span><span class="v">82%</span><span class="small muted">Charging · USB · 31.4 °C</span></div>
+        <div class="card card-pad stat"><span class="small muted">Memory</span><span class="v">7.9 / 12 GB</span><span class="small muted">66% used</span></div>
+        <div class="card card-pad stat"><span class="small muted">Storage</span><span class="v">88 GB free</span><span class="small muted">of 128 GB</span></div>
+        <div class="card card-pad stat"><span class="small muted">Display</span><span class="v">1344 × 2992</span><span class="small muted">480 dpi · 120 Hz</span></div>
+      </div>
+      <div class="card card-pad"><dl class="kv"><dt>Build</dt><dd class="mono">AP4A.250105.002</dd><dt>Security patch</dt><dd>2025-01-05</dd><dt>ABI</dt><dd>arm64-v8a</dd><dt>Developer options</dt><dd>On · stay awake while charging</dd></dl></div>
+      <div><h2 class="section-title" style="margin-bottom: 8px">Raw dumps</h2><div class="row"><button class="btn btn-secondary btn-sm">getprop</button><button class="btn btn-secondary btn-sm">dumpsys battery</button><button class="btn btn-secondary btn-sm">dumpsys meminfo</button><button class="btn btn-secondary btn-sm">Activities</button><button class="btn btn-secondary btn-sm">Bug report…</button></div></div>
+    </div>
+
+    <!-- SHELL -->
+    <div class="panel" data-panel="shell" hidden>
+      <div class="row"><div class="seg" role="group" aria-label="Command mode"><button aria-pressed="true">Android shell</button><button aria-pressed="false">adb (this device)</button></div><div class="spacer"></div><button class="btn btn-ghost"><svg data-i="terminal"></svg>Open in terminal</button></div>
+      <div class="term">
+        <pre>$ dumpsys activity activities | grep mResumedActivity
+  mResumedActivity: ActivityRecord{8c1d2 u0 com.example.shop/.MainActivity t412}
+$ pm list packages -3
+package:com.example.shop
+package:com.example.shop.staging</pre>
+        <form onsubmit="return false"><span class="muted">$</span><input placeholder="Enter a command · ↑ for history" aria-label="Shell command"><button class="btn btn-secondary btn-sm">Run</button></form>
+      </div>
+      <div class="row small muted"><span>Snippets:</span><button class="btn btn-ghost btn-sm">Current activity</button><button class="btn btn-ghost btn-sm">Installed packages</button><button class="btn btn-ghost btn-sm">Wi-Fi info</button></div>
+    </div>
+
+    <!-- FILES -->
+    <div class="panel" data-panel="files" hidden>
+      <div class="row">
+        <nav class="row small" aria-label="Path" style="gap: 4px"><a href="#">sdcard</a><span class="muted">/</span><a href="#">Download</a></nav>
+        <div class="spacer"></div>
+        <button class="btn btn-secondary"><svg data-i="upload"></svg>Push file…</button>
+        <button class="btn btn-secondary" disabled style="opacity:.5"><svg data-i="download"></svg>Pull selected</button>
+      </div>
+      <div class="card" style="overflow-x: auto">
+        <table class="files">
+          <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+          <tbody>
+            <tr><td class="row" style="gap:8px"><svg data-i="folder"></svg>Screenshots</td><td class="muted">—</td><td class="muted">Today</td></tr>
+            <tr><td class="row" style="gap:8px"><svg data-i="file"></svg>fixtures.json</td><td class="muted">18 KB</td><td class="muted">Yesterday</td></tr>
+            <tr><td class="row" style="gap:8px"><svg data-i="file"></svg>example-shop-2.5.0.apk</td><td class="muted">48.2 MB</td><td class="muted">12 Nov</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="small muted">Drop files here to push them to this folder.</div>
+    </div>
+  </section>
+</div>
+
+<section class="ai-dock" data-scope="Pixel 8 Pro"></section>
+
+<div class="toast" role="status" style="bottom: 96px"><svg data-i="checkCircle" style="color: var(--vscode-testing-iconPassed)"></svg><div><div style="color: var(--mota-heading)">Example Shop launched</div><div class="small muted">412 ms to first frame</div></div><button class="icon-btn" aria-label="Dismiss" onclick="this.parentElement.remove()"><svg data-i="close"></svg></button></div>
+
+<script>
+document.getElementById('gallery').innerHTML = ['10:42', '10:31', '10:30', '09:58', 'Yesterday'].map((t, i) =>
+  `<button class="shot" ${i === 0 ? 'aria-selected="true"' : ''}><div class="phone" style="--accent:${['#3b6fb6','#2f7a57','#3b6fb6','#a45a2a','#5a4b8a'][i]}"><div class="bar"></div><div class="blk"></div><div class="ln"></div></div><span class="small muted">${i === 3 ? 'Video · 0:42' : 'Screenshot'} · ${t}</span></button>`).join('');
+document.addEventListener('click', e => {
+  const tab = e.target.closest('[role="tab"]'); if (!tab) return;
+  document.querySelectorAll('[role="tab"]').forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+  document.querySelectorAll('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== tab.dataset.tab);
+  drawIcons();
+});
+</script>
+</body>
+</html>

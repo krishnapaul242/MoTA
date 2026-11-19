@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · Install APK</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+.apk { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.appicon { width: 48px; height: 48px; border-radius: 12px; background: #2f6fb6; color: #fff; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.facts b { color: var(--mota-heading); font-weight: 600; }
+table.targets { width: 100%; border-collapse: collapse; min-width: 720px; }
+table.targets th { text-align: left; font-size: 12px; font-weight: 600; color: var(--vscode-descriptionForeground); padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); }
+table.targets td { padding: 10px 12px; border-bottom: 1px solid var(--vscode-panel-border); vertical-align: middle; }
+table.targets tr.disabled td { color: var(--vscode-descriptionForeground); }
+.plan { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.plan.warn { color: var(--vscode-editorWarning-foreground); }
+.bar { height: 4px; border-radius: 2px; background: var(--vscode-panel-border); overflow: hidden; width: 160px; }
+.bar span { display: block; height: 100%; background: var(--vscode-button-background); }
+.result { display: flex; flex-direction: column; gap: 6px; }
+.result .line { display: inline-flex; align-items: center; gap: 6px; }
+.ok { color: var(--vscode-testing-iconPassed); }
+.bad { color: var(--vscode-errorForeground); }
+.fix { border-left: 2px solid var(--vscode-errorForeground); padding: 6px 10px; background: var(--vscode-textCodeBlock-background); border-radius: 0 4px 4px 0; font-size: 12px; max-width: 460px; }
+.footer { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 24px; border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
+.mode { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.mode label { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; cursor: pointer; }
+.mode label:has(input:checked) { border-color: var(--vscode-focusBorder); background: var(--vscode-list-activeSelectionBackground); }
+.mode input { margin-top: 2px; accent-color: var(--vscode-button-background); }
+details.adv summary { cursor: pointer; display: flex; gap: 8px; align-items: center; list-style: none; }
+details.adv summary::-webkit-details-marker { display: none; }
+details.adv[open] .chev { transform: rotate(90deg); }
+.advgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="page" style="padding-bottom: 8px">
+  <div class="mock-note row">Mockup state:
+    <div class="seg" role="group" aria-label="Mockup state" id="state">
+      <button aria-pressed="true" data-s="ready">Before install</button><button aria-pressed="false" data-s="running">Installing</button><button aria-pressed="false" data-s="done">Finished with a failure</button>
+    </div>
+  </div>
+
+  <header class="page-header">
+    <div><h1>Install APK</h1><div class="subtitle">Choose devices, check what will change, then install.</div></div>
+    <div class="row" style="gap: 12px">
+      <label class="check small"><input type="checkbox" checked> Launch when done</label>
+      <div class="row" id="actions"></div>
+    </div>
+  </header>
+
+  <section class="card card-pad apk" aria-label="Selected APK">
+    <span class="appicon">ES</span>
+    <div style="flex: 1; min-width: 240px; display: flex; flex-direction: column; gap: 6px">
+      <div class="row" style="gap: 10px"><h2 style="font-size: 16px">Example Shop</h2><span class="badge">debug</span></div>
+      <div class="facts"><span><b>2.5.0</b> (250)</span><span class="mono">com.example.shop</span><span>48.2 MB</span><span>min SDK 26 · target 35</span><span>arm64-v8a, armeabi-v7a</span></div>
+      <div class="small muted mono" title="/Users/krishna/Projects/shop/android/app/build/outputs/apk/debug/app-debug.apk">…/app/build/outputs/apk/debug/app-debug.apk · built 4 min ago</div>
+    </div>
+    <button class="btn btn-secondary"><svg data-i="folder"></svg>Choose another APK</button>
+  </section>
+
+  <section class="card" style="overflow-x: auto" aria-label="Target devices">
+    <div class="row" style="justify-content: space-between; padding: 12px 12px 4px">
+      <h2>Devices</h2>
+      <span class="small muted" id="selsummary">3 of 4 selected</span>
+    </div>
+    <table class="targets">
+      <thead><tr><th style="width: 32px"><input type="checkbox" checked aria-label="Select all ready devices"></th><th>Device</th><th>Installed now</th><th>What happens</th><th style="min-width: 260px">Result</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+
+  <section class="card card-pad" style="display: flex; flex-direction: column; gap: 12px" aria-label="Install options">
+    <h2>How to install</h2>
+    <div class="mode" role="radiogroup" aria-label="Install mode">
+      <label><input type="radio" name="mode" checked><span><b style="color: var(--mota-heading)">Update, keep app data</b><br><span class="small muted">Replaces the app and keeps logins, databases and settings. Devices with a different signing key are skipped.</span></span></label>
+      <label><input type="radio" name="mode"><span><b style="color: var(--mota-heading)">Clean install, erase app data</b><br><span class="small muted">Uninstalls first, then installs. You will be asked to confirm.</span></span></label>
+    </div>
+    <details class="adv">
+      <summary><svg data-i="chevronRight" class="chev"></svg><span style="font-weight: 600; color: var(--mota-heading)">Advanced</span><span class="small muted">Allow downgrade · test APKs allowed · permissions not granted · current user · 180 s timeout</span></summary>
+      <div class="advgrid">
+        <label class="check"><input type="checkbox" checked> Allow downgrade (debuggable apps)</label>
+        <label class="check"><input type="checkbox" checked> Allow test-only APKs</label>
+        <label class="check"><input type="checkbox"> Grant all runtime permissions</label>
+        <label class="field"><span>Android user</span><select class="select"><option>Current user</option><option>All users</option><option>User 10 (Work profile)</option></select></label>
+        <label class="field"><span>Timeout</span><select class="select"><option>60 s</option><option selected>180 s</option><option>600 s</option></select></label>
+      </div>
+    </details>
+  </section>
+</div>
+
+<section class="ai-dock" data-scope="3 target devices"></section>
+
+<script>
+const data = [
+  { name: 'Pixel 8 Pro', sub: 'Android 15 · USB', now: '2.4.1 (241)', plan: ['Update 2.4.1 → 2.5.0', ''], sel: true,
+    running: ['progress', 'Installing… 31 of 48 MB', 64], done: ['ok', 'Installed in 12 s · launched'] },
+  { name: 'Galaxy S23', sub: 'Android 14 · Wi-Fi', now: 'Not installed', plan: ['Fresh install', ''], sel: true,
+    running: ['progress', 'Streaming APK… 12 of 48 MB', 25], done: ['ok', 'Installed in 41 s · launched'] },
+  { name: 'Redmi Note 12', sub: 'Android 13 · Wi-Fi', now: '2.4.1 (241) · release key', plan: ['Signing key differs', 'warn'], sel: true,
+    running: ['wait', 'Waiting…'], done: ['bad', 'Not installed: signing key differs from the installed app.'] },
+  { name: 'Galaxy A54', sub: 'Unauthorized', now: '—', plan: ['Accept the debugging prompt first', 'warn'], sel: false, disabled: true },
+];
+let state = 'ready';
+function result(d) {
+  if (d.disabled || !d.sel) return '<span class="muted">—</span>';
+  if (state === 'ready') return '<span class="muted">Ready</span>';
+  const r = d[state];
+  if (r[0] === 'progress') return `<div class="result"><span class="small">${r[1]}</span><div class="bar" role="progressbar" aria-valuenow="${r[2]}" aria-valuemin="0" aria-valuemax="100"><span style="width:${r[2]}%"></span></div></div>`;
+  if (r[0] === 'wait') return `<span class="muted">${r[1]}</span>`;
+  if (r[0] === 'ok') return `<div class="result"><span class="line ok"><svg data-i="checkCircle"></svg>${r[1]}</span></div>`;
+  return `<div class="result"><span class="line bad"><svg data-i="error"></svg>${r[1]}</span>
+    <div class="fix">To install 2.5.0 here, the existing app must be removed. This erases its data on this device.<div class="row" style="margin-top:8px"><button class="btn btn-danger btn-sm">Uninstall &amp; install…</button><button class="btn btn-ghost btn-sm">Copy error</button></div></div></div>`;
+}
+function render() {
+  document.getElementById('rows').innerHTML = data.map(d => `<tr class="${d.disabled ? 'disabled' : ''}">
+    <td><input type="checkbox" ${d.sel ? 'checked' : ''} ${d.disabled || state !== 'ready' ? 'disabled' : ''} aria-label="Install on ${d.name}"></td>
+    <td><div style="font-weight:600;color:var(--mota-heading)">${d.name}</div><div class="small muted">${d.sub}</div></td>
+    <td class="small">${d.now}</td>
+    <td><span class="plan ${d.plan[1]}">${d.plan[1] ? '<svg data-i="warn"></svg>' : ''}${d.plan[0]}</span></td>
+    <td>${result(d)}</td></tr>`).join('');
+  document.getElementById('actions').innerHTML =
+    state === 'ready' ? '<span class="small muted">1 device will be skipped (signing key)</span><button class="btn btn-primary"><svg data-i="package"></svg>Install on 3 devices</button>'
+    : state === 'running' ? '<span class="small muted">Installing on 2 devices…</span><button class="btn btn-secondary">Cancel</button>'
+    : '<span class="small"><span class="ok">2 installed</span> · <span class="bad">1 failed</span></span><button class="btn btn-secondary">Retry failed</button><button class="btn btn-primary"><svg data-i="play"></svg>Launch on 2 devices</button>';
+  drawIcons();
+}
+document.getElementById('state').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  state = b.dataset.s; document.querySelectorAll('#state button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); render();
+});
+document.addEventListener('DOMContentLoaded', render);
+</script>
+</body>
+</html>

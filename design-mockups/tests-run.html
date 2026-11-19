@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · Test run</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+.banner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 12px 16px; border-radius: 8px; background: var(--mota-live-bg); border: 1px solid var(--vscode-focusBorder); }
+.banner .title { color: var(--mota-heading); font-weight: 600; }
+.overall { flex: 1 1 200px; height: 6px; border-radius: 3px; background: var(--vscode-panel-border); overflow: hidden; display: flex; }
+.overall .p { background: var(--vscode-testing-iconPassed); } .overall .f { background: var(--vscode-errorForeground); } .overall .r { background: var(--vscode-charts-blue); }
+.count { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.farm { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.dev { background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-panel-border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+.dev.testing { border-color: var(--vscode-focusBorder); }
+.dev.idle { opacity: .55; }
+.stage { position: relative; height: 280px; background: var(--mota-stage); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.stage .phone { height: 100%; }
+.stage .pill { position: absolute; top: 10px; left: 10px; }
+.stage .pill.blocked { top: auto; bottom: 10px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+.meta { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.prog { height: 6px; border-radius: 3px; background: var(--vscode-panel-border); overflow: hidden; display: flex; }
+.prog .p { background: var(--vscode-testing-iconPassed); } .prog .f { background: var(--vscode-errorForeground); }
+.current { font-family: var(--vscode-editor-font-family); font-size: 12px; color: var(--vscode-charts-blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+.steps { font-family: var(--vscode-editor-font-family); font-size: 11.5px; line-height: 1.6; background: var(--vscode-textCodeBlock-background); border-radius: 6px; padding: 6px 10px; }
+.steps .ok { color: var(--vscode-testing-iconPassed); } .steps .no { color: var(--vscode-errorForeground); } .steps .run { color: var(--vscode-charts-blue); }
+.diag { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
+.diag svg.i { color: var(--vscode-charts-blue); margin-top: 1px; }
+.kind { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 600; }
+.kind.bug { background: rgba(244,135,113,.15); color: var(--vscode-errorForeground); }
+.kind.env { background: rgba(204,167,0,.15); color: var(--vscode-editorWarning-foreground); }
+.kind.flaky { background: rgba(55,148,255,.15); color: var(--vscode-charts-blue); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="page-header">
+    <div><h1>Devices</h1><div class="subtitle">4 testing · 1 not in this run</div></div>
+    <div class="row"><button class="btn btn-secondary"><svg data-i="plus"></svg>Add device</button></div>
+  </header>
+
+  <section class="banner" aria-label="Test run progress">
+    <svg data-i="spinner" class="spin" style="color: var(--vscode-charts-blue)"></svg>
+    <div><div class="title">Maestro run · 7 flows on 4 phones</div><div class="small muted">Started 10:42 · 3:12 elapsed · about 5 min left</div></div>
+    <div class="overall" role="progressbar" aria-valuenow="54" aria-valuemin="0" aria-valuemax="100" aria-label="Overall progress"><span class="p" style="width: 46%"></span><span class="f" style="width: 8%"></span></div>
+    <span class="count"><span class="dot ready"></span>11 passed</span>
+    <span class="count"><span class="dot fail"></span>2 failed</span>
+    <span class="count"><span class="dot live"></span>3 running</span>
+    <span class="count"><span class="dot off"></span>9 queued</span>
+    <a class="btn btn-secondary" href="tests-results.html" style="text-decoration: none">Open results</a>
+    <button class="btn btn-danger">Cancel run</button>
+  </section>
+
+  <div class="farm">
+    <article class="dev testing">
+      <div class="stage">
+        <div class="phone" style="--accent:#3b6fb6"><div class="bar"></div><div class="blk"></div><div class="ln" style="width:70%"></div><div class="ln"></div><div class="blk" style="height:14%"></div></div>
+        <span class="pill"><span class="dot live"></span>Testing 6/7</span>
+        <span class="pill blocked">Input blocked while testing</span>
+      </div>
+      <div class="meta">
+        <div class="row" style="justify-content: space-between"><div><div style="font-weight: 600; color: var(--mota-heading)">Pixel 8 Pro</div><div class="small muted">Android 15 · USB</div></div><span class="small muted">6 passed</span></div>
+        <div class="prog"><span class="p" style="width: 75%"></span></div>
+        <div class="current"><svg data-i="play" style="width:12px;height:12px"></svg>checkout/add_to_cart.yaml</div>
+        <div class="steps"><div class="ok">✓ launchApp</div><div class="ok">✓ tapOn: "Add to cart"</div><div class="run">… assertVisible: "1 item"</div></div>
+        <div class="row"><button class="btn btn-secondary btn-sm">Full log</button><button class="btn btn-ghost btn-sm">Watch live</button><span class="spacer"></span><button class="btn btn-ghost btn-sm">Stop</button></div>
+      </div>
+    </article>
+
+    <article class="dev testing">
+      <div class="stage">
+        <div class="phone dark" style="--accent:#5a4b8a"><div class="bar"></div><div class="blk"></div><div class="ln"></div><div class="ln" style="width:55%"></div></div>
+        <span class="pill"><span class="dot live"></span>Testing 4/7 · 1 failed</span>
+        <span class="pill blocked">Input blocked while testing</span>
+      </div>
+      <div class="meta">
+        <div class="row" style="justify-content: space-between"><div><div style="font-weight: 600; color: var(--mota-heading)">Galaxy S23</div><div class="small muted">Android 14 · Wi-Fi</div></div><span class="small muted">3 passed · 1 failed</span></div>
+        <div class="prog"><span class="p" style="width: 37%"></span><span class="f" style="width: 13%"></span></div>
+        <div class="current"><svg data-i="play" style="width:12px;height:12px"></svg>product_detail.yaml</div>
+        <div class="diag"><svg data-i="sparkle"></svg><div><span class="kind bug">App bug</span> <b>search.yaml</b>: the search API returned HTTP 503, so the app showed its error screen. The test itself is fine. <a href="tests-results.html">Details</a></div></div>
+        <div class="row"><button class="btn btn-secondary btn-sm">Full log</button><button class="btn btn-ghost btn-sm">Watch live</button><span class="spacer"></span><button class="btn btn-ghost btn-sm">Stop</button></div>
+      </div>
+    </article>
+
+    <article class="dev testing">
+      <div class="stage">
+        <div class="phone" style="--accent:#a45a2a"><div class="bar"></div><div class="blk"></div><div class="ln" style="width:70%"></div></div>
+        <span class="pill"><span class="dot live"></span>Testing 3/7 · 1 failed</span>
+        <span class="pill blocked">Input blocked while testing</span>
+      </div>
+      <div class="meta">
+        <div class="row" style="justify-content: space-between"><div><div style="font-weight: 600; color: var(--mota-heading)">Redmi Note 12</div><div class="small muted">Android 13 · Wi-Fi · managed</div></div><span class="small muted">2 passed · 1 failed</span></div>
+        <div class="prog"><span class="p" style="width: 25%"></span><span class="f" style="width: 12%"></span></div>
+        <div class="current"><svg data-i="play" style="width:12px;height:12px"></svg>search.yaml</div>
+        <div class="diag"><svg data-i="sparkle"></svg><div><span class="kind env">Phone problem</span> <b>onboarding.yaml</b> timed out on "Next": a MIUI permission dialog covered the screen. Claude dismissed it. <span class="kind flaky">Rerun queued</span></div></div>
+        <div class="row"><button class="btn btn-secondary btn-sm">Full log</button><button class="btn btn-ghost btn-sm">Watch live</button><span class="spacer"></span><button class="btn btn-ghost btn-sm">Stop</button></div>
+      </div>
+    </article>
+
+    <article class="dev testing">
+      <div class="stage">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center" class="small muted"><svg data-i="spinner" class="spin" style="width:26px;height:26px;color:var(--vscode-charts-blue)"></svg><div style="color:var(--mota-heading);font-weight:600">Starting Maestro…</div><div>Usually about 40 s per phone</div></div>
+        <span class="pill"><span class="dot live"></span>Starting</span>
+      </div>
+      <div class="meta">
+        <div class="row" style="justify-content: space-between"><div><div style="font-weight: 600; color: var(--mota-heading)">vivo Y21</div><div class="small muted">Android 12 · USB</div></div><span class="small muted">0 / 7</span></div>
+        <div class="prog"></div>
+        <div class="small muted">Installing Maestro's driver and connecting · 22 s</div>
+        <div class="row"><button class="btn btn-secondary btn-sm">Full log</button><span class="spacer"></span><button class="btn btn-ghost btn-sm">Stop</button></div>
+      </div>
+    </article>
+
+    <article class="dev idle">
+      <div class="stage"><div style="text-align:center" class="small muted"><svg data-i="wifiOff" style="width:26px;height:26px"></svg><div>Not connected</div></div><span class="pill"><span class="dot off"></span>Offline</span></div>
+      <div class="meta"><div style="font-weight: 600; color: var(--mota-heading)">Pixel 6a</div><div class="small muted">Not in this run</div></div>
+    </article>
+  </div>
+</div>
+<section class="ai-dock" data-scope="This run · 4 devices"></section>
+</body>
+</html>

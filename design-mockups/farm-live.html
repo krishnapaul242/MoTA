@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoTA · Live view</title>
+<link rel="stylesheet" href="theme.css">
+<script src="mock.js"></script>
+<style>
+body { display: flex; flex-direction: column; min-height: 100vh; }
+.split { flex: 1; display: flex; flex-wrap: wrap; min-height: 0; }
+.rail { flex: 1 1 260px; max-width: 300px; border-right: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); display: flex; flex-direction: column; }
+.rail-item { display: flex; gap: 10px; align-items: center; width: 100%; padding: 8px 14px; border: 0; border-left: 2px solid transparent; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.rail-item:hover { background: var(--vscode-list-hoverBackground); }
+.rail-item[aria-current="true"] { background: var(--vscode-list-activeSelectionBackground); border-left-color: var(--vscode-focusBorder); }
+.rail-item .thumb { width: 30px; height: 64px; border-radius: 5px; border: 2px solid var(--mota-bezel); overflow: hidden; flex: none; background: #fafafa; }
+.rail-item .thumb span { display: block; height: 11px; background: var(--accent); }
+.main { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; }
+.main-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--vscode-panel-border); }
+.work { flex: 1; display: flex; flex-wrap: wrap; min-height: 0; }
+.stage { flex: 0 0 auto; display: flex; justify-content: center; align-items: flex-start; padding: 20px 24px; background: var(--mota-stage); border-right: 1px solid var(--vscode-panel-border); }
+.stage-col { display: grid; gap: 10px; justify-items: stretch; }
+.side { flex: 1 1 340px; min-width: 0; padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow: auto; max-height: calc(100vh - 150px); }
+.side .card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.side .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 12px; margin: 0; }
+.kv dt { color: var(--vscode-descriptionForeground); }
+.kv dd { margin: 0; color: var(--mota-heading); display: flex; align-items: center; gap: 6px; }
+.logtail { font-family: var(--vscode-editor-font-family); font-size: 12px; line-height: 1.6; background: var(--vscode-textCodeBlock-background); border-radius: 6px; padding: 6px 0; overflow-x: auto; }
+.logtail div { padding: 0 10px; white-space: pre; }
+.logtail .E { color: var(--vscode-errorForeground); }
+.logtail .W { color: var(--vscode-editorWarning-foreground); }
+.strip { display: flex; flex-wrap: wrap; gap: 10px; }
+.strip button { display: flex; flex-direction: column; gap: 4px; align-items: center; background: transparent; border: 0; padding: 0; color: var(--vscode-descriptionForeground); font: inherit; font-size: 11px; cursor: pointer; }
+.strip .phone { width: 52px; height: auto; border-width: 2px; border-radius: 6px; gap: 4px; padding-bottom: 4px; }
+.screen { height: min(640px, calc(100vh - 260px)); min-height: 420px; cursor: crosshair; border-width: 6px; border-radius: 24px; gap: 4%; }
+.devtools { display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; }
+.devtools hr { width: 100%; border: 0; border-top: 1px solid var(--vscode-widget-border); margin: 4px 0; }
+.console { border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
+.console-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: transparent; border: 0; color: var(--vscode-foreground); font: inherit; cursor: pointer; text-align: left; }
+</style>
+</head>
+<body>
+<div class="split">
+  <aside class="rail" aria-label="Devices">
+    <div class="row" style="padding: 14px 14px 10px; justify-content: space-between">
+      <a href="farm.html" class="row" style="gap: 6px; color: var(--mota-heading); text-decoration: none; font-weight: 600"><svg data-i="arrowLeft"></svg>Devices <span class="muted" style="font-weight: 400">6</span></a>
+      <button class="icon-btn" aria-label="Add device" title="Add device"><svg data-i="plus"></svg></button>
+    </div>
+    <label class="search" style="margin: 0 14px 10px"><svg data-i="search"></svg><input placeholder="Filter devices" aria-label="Filter devices"></label>
+    <div id="rail"></div>
+  </aside>
+
+  <main class="main">
+    <header class="main-head">
+      <div>
+        <div class="row" style="gap: 10px">
+          <h1 style="font-size: 16px">Nokia 5.4</h1>
+          <span class="live-pill"><span class="dot live"></span>Live · 58 fps · 40 ms</span>
+        </div>
+        <div class="subtitle">HMD · Android 12 · USB · 91% · 720 × 1560</div>
+      </div>
+      <div class="row" style="gap: 6px">
+        <a class="btn btn-secondary" href="controls.html" style="text-decoration: none">Open full controls</a>
+        <button class="icon-btn" title="Open in a new editor tab" aria-label="Open in a new editor tab"><svg data-i="popout"></svg></button>
+        <a class="icon-btn" title="Close live view (Esc)" aria-label="Close live view" href="farm.html"><svg data-i="close"></svg></a>
+      </div>
+    </header>
+
+    <div class="work">
+    <section class="stage" aria-label="Live screen">
+      <div class="stage-col">
+        <div style="display: flex; gap: 12px; align-items: flex-start">
+        <div class="phone screen" style="--accent:#2f7a57" role="img" aria-label="Live screen of Nokia 5.4. Click to tap, drag to swipe.">
+          <div class="bar" style="height: 10%"></div><div class="blk" style="height: 20%"></div><div class="ln" style="width: 70%; height: 2.5%"></div><div class="ln" style="height: 2.5%"></div><div class="ln" style="width: 55%; height: 2.5%"></div><div class="blk" style="height: 12%"></div><div class="blk" style="height: 12%"></div>
+        </div>
+      <div class="devtools" role="toolbar" aria-orientation="vertical" aria-label="Device buttons">
+        <button class="tool" title="Power" aria-label="Power"><svg data-i="power"></svg></button>
+        <button class="tool" title="Volume up" aria-label="Volume up"><svg data-i="volUp"></svg></button>
+        <button class="tool" title="Volume down" aria-label="Volume down"><svg data-i="volDown"></svg></button>
+        <button class="tool" title="Rotate" aria-label="Rotate"><svg data-i="rotate"></svg></button>
+        <hr>
+        <button class="tool" title="Back" aria-label="Back"><svg data-i="back"></svg></button>
+        <button class="tool" title="Home" aria-label="Home"><svg data-i="home"></svg></button>
+        <button class="tool" title="Recent apps" aria-label="Recent apps"><svg data-i="recents"></svg></button>
+        <hr>
+        <button class="tool" title="Screenshot" aria-label="Screenshot"><svg data-i="camera"></svg></button>
+        <button class="tool" title="Record screen" aria-label="Record screen" style="color: var(--vscode-errorForeground)"><svg data-i="record"></svg></button>
+        </div>
+        </div>
+        <form class="row" style="flex-wrap: nowrap" onsubmit="return false">
+          <label class="search" style="flex: 1"><svg data-i="keyboard"></svg><input placeholder="Type on device" aria-label="Text to type on the device"></label>
+          <button class="btn btn-secondary">Send</button>
+        </form>
+        <div class="small muted" style="text-align: center">Click to tap · drag to swipe</div>
+      </div>
+    </section>
+
+    <aside class="side" aria-label="Quick actions and details">
+      <section class="card">
+        <div class="head"><h2>App</h2><span class="status small"><span class="dot ready"></span>Running</span></div>
+        <div class="row" style="flex-wrap: nowrap">
+          <select class="select" style="flex: 1; min-width: 0" aria-label="App"><option>Example Shop · com.example.shop</option><option>Example Shop (staging)</option></select>
+          <button class="btn btn-primary"><svg data-i="play"></svg>Launch</button>
+          <button class="btn btn-secondary">Force stop</button>
+        </div>
+        <div class="row" style="flex-wrap: nowrap">
+          <input class="input mono" style="flex: 1; min-width: 0" placeholder="Deep link, e.g. shop://product/123" aria-label="Deep link">
+          <button class="btn btn-secondary"><svg data-i="link"></svg>Open</button>
+        </div>
+        <div class="row"><button class="btn btn-ghost btn-sm"><svg data-i="package"></svg>Install APK…</button><button class="btn btn-ghost btn-sm"><svg data-i="activity"></svg>Monitor</button><button class="btn btn-ghost btn-sm"><svg data-i="terminal"></svg>Shell</button></div>
+      </section>
+
+      <section class="card">
+        <div class="head"><h2>Logs</h2><a href="controls.html" class="small">Open logs</a></div>
+        <div class="logtail" role="log" aria-label="Recent log lines">
+          <div>10:42:18 I ActivityManager  Displayed .MainActivity +412ms</div>
+          <div class="W">10:42:19 W OkHttp  Slow response 1840 ms /api/products</div>
+          <div>10:42:19 I ReactNativeJS  Cart restored with 3 items</div>
+          <div class="E">10:42:21 E ReactNativeJS  TypeError: undefined is not an object</div>
+          <div class="E">10:42:21 E ReactNativeJS      at ProductRow (ProductRow.tsx:42)</div>
+          <div>10:42:22 I Choreographer  Skipped 31 frames</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="head"><h2>Captures</h2><a href="controls.html" class="small">Open captures</a></div>
+        <div class="strip">
+          <button title="Open capture"><div class="phone" style="--accent:#2f7a57"><div class="bar"></div><div class="blk"></div><div class="ln"></div></div>10:42</button>
+          <button title="Open capture"><div class="phone" style="--accent:#2f7a57"><div class="bar"></div><div class="blk"></div><div class="ln"></div></div>10:31</button>
+          <button title="Open capture"><div class="phone" style="--accent:#a45a2a"><div class="bar"></div><div class="blk"></div><div class="ln"></div></div>Video 0:42</button>
+          <button title="Open capture"><div class="phone" style="--accent:#3b6fb6"><div class="bar"></div><div class="blk"></div><div class="ln"></div></div>09:58</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Device</h2>
+        <dl class="kv">
+          <dt>Model</dt><dd>Nokia 5.4 (HMD)</dd>
+          <dt>Android</dt><dd>12 · API 31</dd>
+          <dt>Connection</dt><dd>USB</dd>
+          <dt>Battery</dt><dd>91% · 30.8 °C</dd>
+          <dt>Screen</dt><dd>720 × 1560 · 60 Hz</dd>
+          <dt>Serial</dt><dd class="mono">PD21ADD464010316<button class="icon-btn" style="width:22px;height:22px" aria-label="Copy serial" title="Copy"><svg data-i="copy"></svg></button></dd>
+        </dl>
+      </section>
+    </aside>
+    </div>
+  </main>
+</div>
+<section class="ai-dock" data-scope="Nokia 5.4" data-open></section>
+<script>
+const rows = [
+  ['Pixel 8 Pro', 'Ready', 'ready', 'USB · 82%', '#3b6fb6'],
+  ['Galaxy S23', 'Ready', 'ready', 'Wi-Fi · 64%', '#5a4b8a'],
+  ['Nokia 5.4', 'Live', 'live', 'USB · 91%', '#2f7a57', true],
+  ['Redmi Note 12', 'Ready', 'ready', 'Wi-Fi · 18% low', '#a45a2a'],
+  ['Galaxy A54', 'Unauthorized', 'warn', 'USB', '#555'],
+  ['Pixel 6a', 'Offline', 'off', 'Wi-Fi · seen 2 h ago', '#555'],
+];
+document.getElementById('rail').innerHTML = rows.map(r => `<button class="rail-item" ${r[5] ? 'aria-current="true"' : ''}>
+  <span class="thumb" style="--accent:${r[4]}"><span></span></span>
+  <span style="min-width:0;display:flex;flex-direction:column;gap:3px">
+    <span style="font-weight:600;color:var(--mota-heading)">${r[0]}</span>
+    <span class="status muted"><span class="dot ${r[2]}"></span>${r[1]}</span>
+    <span class="small muted">${r[3]}</span>
+  </span></button>`).join('');
+</script>
+</body>
+</html>
