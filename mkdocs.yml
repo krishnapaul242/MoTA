@@ -1,0 +1,70 @@
+site_name: MoTA Android
+site_description: Android device farm, Maestro test runs and Claude-assisted testing inside VS Code.
+site_url: https://krishnapaul242.github.io/MoTA/
+repo_url: https://github.com/krishnapaul242/MoTA
+repo_name: krishnapaul242/MoTA
+edit_uri: edit/main/docs/
+exclude_docs: requirements.txt
+
+theme:
+  name: material
+  logo: assets/logo.png
+  favicon: assets/favicon.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle: { icon: material/weather-sunny, name: Light mode }
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+extra_css:
+  - assets/extra.css
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Devices:
+      - Pair and connect: connecting.md
+      - Managed test phones: managed-phones.md
+      - Device control page: device-controls.md
+  - Apps:
+      - Install APKs: install.md
+      - Launch apps and keep awake: launch-and-awake.md
+      - Logs and performance: logs-and-performance.md
+  - Testing:
+      - Recordings and replay: recordings.md
+      - Maestro test runs: maestro.md
+  - AI:
+      - Claude assistant: ai-assistant.md
+      - MCP for other agents: mcp.md
+  - Reference:
+      - Settings: settings.md
+      - Development: development.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - md_in_html
+  - pymdownx.keys
+  - pymdownx.tabbed: { alternate_style: true }
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg

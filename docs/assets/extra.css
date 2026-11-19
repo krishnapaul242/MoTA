@@ -1,0 +1,29 @@
+/* Brand blue, taken from the MoTA mascot logo */
+:root, [data-md-color-scheme="default"] {
+  --md-primary-fg-color: #1846e0;
+  --md-primary-fg-color--light: #4c6ff0;
+  --md-primary-fg-color--dark: #0f33b3;
+  --md-accent-fg-color: #1846e0;
+}
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #1846e0;
+  --md-primary-fg-color--light: #4c6ff0;
+  --md-primary-fg-color--dark: #0f33b3;
+  --md-accent-fg-color: #7d97ff;
+  --md-typeset-a-color: #8ea5ff;
+}
+/* Logo sits on the blue header: give it a white rounded tile */
+.md-header__button.md-logo img {
+  height: 1.8rem;
+  background: #fff;
+  border-radius: 0.4rem;
+  padding: 0.1rem;
+}
+.mota-hero { display: block; margin: 0 auto 1rem; width: 160px; border-radius: 1.5rem; }
+/* Screenshots */
+.md-typeset figure img[src*="screenshots/"] {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+}
+.md-typeset figure figcaption { max-width: 40rem; }
