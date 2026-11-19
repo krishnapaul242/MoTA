@@ -34,6 +34,10 @@ export interface HostDeps {
   store: { get(): StoredConversation[]; set(items: StoredConversation[]): unknown };
   loadSdk: () => Promise<typeof Sdk>;
   input?: InputRouter;
+  /** Anthropic API key from VS Code's secret storage; when set it is used instead of Claude Code's own sign-in. */
+  apiKey?: () => Promise<string | undefined>;
+  /** Identifies the extension in Claude Code's User-Agent, e.g. mota-android/0.7.4. */
+  clientApp?: string;
 }
 
 export interface StoredConversation extends ConversationSummary { sdkSessionId?: string; model: string; permission: Permission; scope: string[]; tokenCap: number }
@@ -90,10 +94,21 @@ export function resolveClaude(configured = '', home = homedir(), exists = exists
   return found;
 }
 
+/** Secret-storage key for the user's Anthropic API key. */
+export const API_KEY_SECRET = 'mota.anthropicApiKey';
+
+/** Environment for the Claude Code process: inherits ours, adds the API key when one is set, and names the client app. */
+export function claudeEnv(base: NodeJS.ProcessEnv, apiKey?: string, clientApp?: string): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...base };
+  if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+  if (clientApp) env.CLAUDE_AGENT_SDK_CLIENT_APP = clientApp;
+  return env;
+}
+
 /** Explains SDK start-up failures in terms of what to do. */
 export function friendlyError(error: unknown): string {
   const text = errorText(error);
-  if (/not logged in|login|authenticat|401|invalid api key|OAuth/i.test(text)) return `Claude Code is not signed in. Run \`claude\` in a terminal and sign in, then try again. (${text.split('\n')[0]})`;
+  if (/not logged in|login|authenticat|401|invalid api key|OAuth/i.test(text)) return `Claude isn't signed in, or the API key was rejected. Run **MoTA: Set Anthropic API Key**, or run \`claude\` in a terminal and sign in, then try again. (${text.split('\n')[0]})`;
   if (/ENOENT|spawn/i.test(text)) return `Could not start Claude Code. Check mota.ai.claudePath. (${text.split('\n')[0]})`;
   if (/rate limit|429|usage limit/i.test(text)) return `Your Claude usage limit was reached. Try again later. (${text.split('\n')[0]})`;
   return text;
@@ -245,6 +260,7 @@ export class AiHostImpl implements AiHost {
     try {
       const sdk = await this.deps.loadSdk();
       const claude = resolveClaude(this.deps.claudePath());
+      const apiKey = (await this.deps.apiKey?.().catch(() => undefined))?.trim();
       const ready = await this.deps.adb.devices().catch(() => []);
       const workspaceRoot = this.deps.workspaceRoot(), flowsFolder = this.deps.flowsFolder();
       const server = motaServer(sdk, {
@@ -257,6 +273,7 @@ export class AiHostImpl implements AiHost {
         prompt,
         options: {
           pathToClaudeCodeExecutable: claude,
+          env: claudeEnv(process.env, apiKey, this.deps.clientApp),
           cwd: workspaceRoot,
           settingSources: [],
           strictMcpConfig: true,
@@ -412,6 +429,8 @@ export function aiHost(context: VSCode.ExtensionContext, adb: Adb): AiHost {
     screenshotSide: () => config().get<number>('ai.screenshotWidth', 960),
     store: { get: () => context.workspaceState.get<StoredConversation[]>('mota.ai.conversations', []), set: items => context.workspaceState.update('mota.ai.conversations', items) },
     loadSdk,
+    apiKey: () => Promise.resolve(context.secrets.get(API_KEY_SECRET)),
+    clientApp: `mota-android/${String(context.extension?.packageJSON?.version ?? 'dev')}`,
   });
   const created = instance;
   context.subscriptions.push({ dispose: () => { created.dispose(); if (instance === created) instance = undefined; } });

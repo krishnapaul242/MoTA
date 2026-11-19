@@ -139,7 +139,11 @@ Runs are saved in `.mota/test-runs/<run>/<device>/`: `report.xml`, `maestro-cons
 
 ## Claude assistant
 
-The Claude bar runs on the Claude Code installed on this computer, through the Claude Agent SDK, and uses that installation's login. Usage counts against that account. Install Claude Code and run `claude` once to sign in. MoTA looks for it in `~/.local/bin`, `~/.claude/local` or on PATH, or you can set **mota.ai.claudePath**.
+The Claude bar runs on the Claude Code installed on this computer, through the Claude Agent SDK. MoTA looks for it in `~/.local/bin`, `~/.claude/local` or on PATH, or you can set **mota.ai.claudePath**.
+
+Sign-in:
+- **Anthropic API key (recommended):** run **MoTA: Set Anthropic API Key** and paste a key from [platform.claude.com](https://platform.claude.com/). MoTA keeps it in VS Code's secret storage and passes it only to the Claude Code process it starts. Usage is billed to that key. **MoTA: Remove Anthropic API Key** deletes it.
+- **Without a key:** Claude Code uses its own sign-in. Run `claude` once in a terminal to sign in. MoTA never sees or stores those credentials.
 
 Claude works through MoTA's own tools:
 - devices: list, info, screenshot, UI tree, log tail

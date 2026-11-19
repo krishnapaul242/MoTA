@@ -4,7 +4,7 @@ const {mkdtemp} = require('node:fs/promises');
 const {tmpdir} = require('node:os');
 const {join} = require('node:path');
 const {deflateSync} = require('node:zlib');
-const {AiHostImpl, resolveClaude, friendlyError, taskTokens} = require('../out/ai/host');
+const {AiHostImpl, resolveClaude, friendlyError, taskTokens, claudeEnv} = require('../out/ai/host');
 const {compactUiTree} = require('../out/ai/tools');
 const {downscalePng, decodePng, encodePng} = require('../out/ai/png');
 const {describeCall, systemPrompt} = require('../out/ai/prompts');
@@ -37,7 +37,7 @@ const streamText = (id, text) => [
 const result = (cost = 0.02) => ({type: 'result', subtype: 'success', total_cost_usd: cost});
 const init = {type: 'system', subtype: 'init', session_id: 'sdk-session-1'};
 
-async function setup(script) {
+async function setup(script, extra = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mota-ai-'));
   const {sdk, queries} = fakeSdk(script);
   let stored = [];
@@ -45,7 +45,7 @@ async function setup(script) {
   const host = new AiHostImpl({
     adb, workspaceRoot: () => root, flowsFolder: () => join(root, '.maestro'), runsFolder: () => join(root, '.mota', 'test-runs'),
     maestroPath: () => '', claudePath: () => process.execPath, defaultModel: () => '', effort: () => 'low', screenshotSide: () => 960,
-    store: {get: () => stored, set: v => { stored = v; }}, loadSdk: async () => sdk,
+    store: {get: () => stored, set: v => { stored = v; }}, loadSdk: async () => sdk, ...extra,
   });
   const events = [];
   const link = host.connect(e => events.push(e));
@@ -159,7 +159,7 @@ test('Stop ends the turn and declines a pending approval', async () => {
 test('start-up problems are explained', async () => {
   const {link, events} = await setup(async function* () { throw new Error('Invalid API key · Please run /login'); });
   await send(link, 'hi');
-  assert.match(of(events, 'ai/done').pop().message, /not signed in/);
+  assert.match(of(events, 'ai/done').pop().message, /isn't signed in.*Set Anthropic API Key/);
   assert.match(friendlyError(new Error('spawn claude ENOENT')), /Could not start Claude Code/);
 });
 
@@ -237,4 +237,28 @@ test('the bundled agent SDK next to dist/extension.js wins over node_modules', (
   const {sdkPath} = require('../out/ai/host');
   assert.equal(sdkPath('/x/dist', p => p === '/x/dist/agent-sdk.mjs'), '/x/dist/agent-sdk.mjs');
   assert.match(sdkPath('/x/out', () => false), /node_modules\/@anthropic-ai\/claude-agent-sdk\//);
+});
+
+test('a stored API key reaches Claude Code only through its environment, and the client app is named', async () => {
+  const {link, queries} = await setup(async function* () { yield result(); }, {apiKey: async () => ' sk-ant-test-key ', clientApp: 'mota-android/9.9.9'});
+  await send(link, 'hi');
+  const env = queries[0].options.env;
+  assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-test-key');
+  assert.equal(env.CLAUDE_AGENT_SDK_CLIENT_APP, 'mota-android/9.9.9');
+  assert.equal(env.PATH, process.env.PATH, 'inherits the rest of the environment');
+  assert.ok(!JSON.stringify(queries[0].options.systemPrompt).includes('sk-ant'), 'the key never enters the prompt');
+});
+
+test('without a key, Claude Code keeps its own sign-in', async () => {
+  const {link, queries} = await setup(async function* () { yield result(); }, {apiKey: async () => undefined});
+  await send(link, 'hi');
+  assert.equal(queries[0].options.env.ANTHROPIC_API_KEY, process.env.ANTHROPIC_API_KEY);
+  assert.deepEqual(claudeEnv({A: '1'}), {A: '1'});
+  assert.deepEqual(claudeEnv({A: '1'}, 'k', 'app'), {A: '1', ANTHROPIC_API_KEY: 'k', CLAUDE_AGENT_SDK_CLIENT_APP: 'app'});
+});
+
+test('API keys are shape-checked before they are stored', () => {
+  const {apiKeyProblem} = require('../out/aiAuth');
+  assert.equal(apiKeyProblem('sk-ant-api03-' + 'a'.repeat(40)), undefined);
+  for (const bad of ['', '   ', 'sk-ant-short', 'sk-other-' + 'a'.repeat(40), 'sk-ant-api03 ' + 'a'.repeat(40)]) assert.ok(apiKeyProblem(bad), bad);
 });

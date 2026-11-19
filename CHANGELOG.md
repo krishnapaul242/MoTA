@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.4
+- Claude features can use an Anthropic API key: run **MoTA: Set Anthropic API Key**. The key is kept in VS Code's secret storage. Without a key, Claude Code's own sign-in is used.
+- New extension icon.
+
 ## 0.7.3
 - Fixed the Claude Code setup command for MoTA's MCP server.
 - The extension is now bundled, so it installs and starts faster.
