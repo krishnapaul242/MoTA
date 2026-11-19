@@ -158,3 +158,33 @@ test('refuses devices that are not ready and flows outside the folder', async ()
   await assert.rejects(runner.start({flows: [{path: '../x.yaml', name: 'x', tags: []}], serials: ['A']}), /outside the flows folder/);
   await assert.rejects(runner.start({flows: [], serials: ['A']}), /at least one flow/);
 });
+
+test('a run that stops before any flow shows what Maestro said', async () => {
+  const runsDir = await mkdtemp(join(tmpdir(), 'mota-runs-'));
+  const adb = {devices: async () => [{serial: 'A', state: 'device', model: 'A'}], shell: async () => '', run: async () => ''};
+  const {spawn} = fakeMaestro(() => ({lines: ['Debug output path: /x', 'Device A was requested, but it is not connected.'], xml: '', code: 1}));
+  const events = [];
+  const runner = new MaestroRunner({adb, maestro: () => 'm', flowsFolder: () => tmpdir(), runsFolder: () => runsDir, emit: e => events.push(e), spawn});
+  const run = await runner.start({flows: [{path: 'a.yaml', name: 'a', tags: []}], serials: ['A']});
+  await run.done;
+  const d = run.devices.get('A');
+  assert.equal(d.state, 'error');
+  assert.equal(d.message, 'Maestro stopped: Device A was requested, but it is not connected.');
+});
+
+test('a driver install refused by a Xiaomi phone gives the real error and what to switch on', async () => {
+  const runsDir = await mkdtemp(join(tmpdir(), 'mota-runs-'));
+  const adb = {devices: async () => [{serial: 'A', state: 'device', model: 'A'}], shell: async () => '', run: async () => ''};
+  const {spawn} = fakeMaestro(() => ({lines: ['Failure [INSTALL_FAILED_USER_RESTRICTED: Install canceled by user]', '', 'The stack trace was:',
+    'maestro.android.AndroidOperationFailedException: Failure [INSTALL_FAILED_USER_RESTRICTED: Install canceled by user]', '\tat maestro.Foo.bar(Foo.kt:1)', '\tat kotlinx.coroutines.Worker.run(CoroutineScheduler.kt:704)'], xml: '', code: 1}));
+  const runner = new MaestroRunner({adb, maestro: () => 'm', flowsFolder: () => tmpdir(), runsFolder: () => runsDir, emit: () => {}, spawn});
+  const run = await runner.start({flows: [{path: 'a.yaml', name: 'a', tags: []}], serials: ['A']});
+  await run.done;
+  assert.match(run.devices.get('A').message, /^Maestro stopped: Failure \[INSTALL_FAILED_USER_RESTRICTED: Install canceled by user\] .*Install via USB/);
+});
+
+test('refuses to start while another phone is unauthorized, because Maestro then sees no phones', async () => {
+  const adb = {devices: async () => [{serial: 'A', state: 'device'}, {serial: 'X', state: 'unauthorized'}], shell: async () => '', run: async () => ''};
+  const runner = new MaestroRunner({adb, maestro: () => 'm', flowsFolder: () => '/flows', runsFolder: () => tmpdir(), emit: () => {}});
+  await assert.rejects(runner.start({flows: [{path: 'a.yaml', name: 'a', tags: []}], serials: ['A']}), /while X is unauthorized\. Allow USB debugging on that phone or unplug it/);
+});

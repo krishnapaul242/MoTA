@@ -157,6 +157,11 @@ export function motaServer(sdk: typeof Sdk, deps: ToolDeps) {
         const info = run.flows.find(f => f.path === flow);
         const dir = await latestFlowDir(join(device.dir, 'artifacts'), info?.name ?? flow.replace(/^.*\//, '').replace(/\.ya?ml$/i, ''));
         const parts: string[] = [`${flow} on ${s}: ${result.status}${result.failure ? ` — ${result.failure.message}` : ''}`];
+        if (result.status === 'not-run') {
+          parts.push(`Device run ended as ${device.state}${device.message ? `: ${device.message}` : ''}.`);
+          const consoleLog = await fs.readFile(join(device.dir, 'maestro-console.log'), 'utf8').catch(() => '');
+          if (consoleLog.trim()) parts.push('Maestro console (last 30 lines):', consoleLog.trimEnd().split('\n').slice(-30).join('\n'));
+        }
         if (dir) {
           const commands = JSON.parse(await fs.readFile(join(dir, 'commands.json'), 'utf8').catch(() => '[]')) as { command: Record<string, unknown>; metadata?: { status?: string } }[];
           parts.push('Steps:', ...commands.filter(c => !('defineVariablesCommand' in c.command || 'applyConfigurationCommand' in c.command)).map(c => `  ${c.metadata?.status === 'FAILED' ? '✗' : c.metadata?.status === 'COMPLETED' ? '✓' : '–'} ${describeCommand(c.command)}`));

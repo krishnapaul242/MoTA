@@ -45,6 +45,13 @@ export function maestroArgs(serial: string, flows: string[], reportFile: string,
 }
 
 /** Runs Maestro flows on several devices at once, one Maestro process per device. */
+/** What the user can do about common Maestro start-up failures. */
+export function hintFor(message: string): string {
+  if (/INSTALL_FAILED_USER_RESTRICTED/.test(message)) return ' Maestro installs a driver app each run: on Xiaomi/Redmi/POCO turn on Developer options › Install via USB (and USB debugging (Security settings)); on other phones accept the install prompt.';
+  if (/INSTALL_FAILED_VERIFICATION_FAILURE|verif/i.test(message)) return ' Turn off "Verify apps over USB" in Developer options so Maestro can install its driver app.';
+  return '';
+}
+
 export class MaestroRunner {
   private runs = new Map<string, TestRun>();
   constructor(private opts: {
@@ -71,11 +78,15 @@ export class MaestroRunner {
     if (request.clearData && !PACKAGE.test(request.clearData)) throw new Error('Enter a valid app package to clear.');
     const folder = this.opts.flowsFolder();
     for (const f of request.flows) { const abs = resolve(folder, f.path); const r = relative(folder, abs); if (r.startsWith('..') || isAbsolute(r)) throw new Error(`${f.path} is outside the flows folder.`); }
-    const connected = (await adb.devices()).filter(d => d.state === 'device');
+    const all = await adb.devices();
+    const connected = all.filter(d => d.state === 'device');
     const ready = new Set(connected.map(d => d.serial));
     const models = Object.fromEntries(request.serials.map(s => [s, connected.find(d => d.serial === s)?.model ?? s]));
     const missing = request.serials.filter(s => !ready.has(s));
     if (missing.length) throw new Error(`Not ready: ${missing.join(', ')}. Reconnect or deselect these devices.`);
+    // Maestro (dadb 2.0) stops listing devices at the first one it can't open, then sees none at all.
+    const blocking = all.filter(d => /^(unauthorized|offline|authorizing|connecting)$/.test(d.state));
+    if (blocking.length) throw new Error(`Maestro can't see any phone while ${blocking.map(d => `${d.serial} is ${d.state}`).join(', ')}. Allow USB debugging on ${blocking.length > 1 ? 'those phones' : 'that phone'} or unplug ${blocking.length > 1 ? 'them' : 'it'}, then run again.`);
 
     const startedAt = now();
     const runId = new Date(startedAt).toISOString().replace(/[:.]/g, '-').replace('Z', '');
@@ -129,11 +140,14 @@ export class MaestroRunner {
     d.child = child;
     const log = createWriteStream(join(d.dir, 'maestro-console.log'));
     let buffer = '';
+    const tail: string[] = [];
     const onData = (chunk: Buffer) => {
       log.write(chunk);
       buffer += chunk.toString('utf8');
       const lines = buffer.split(/\r?\n/); buffer = lines.pop() ?? '';
       for (const line of lines) {
+        const t = line.trim();
+        if (t && !/^(at |\.\.\. \d+ more|Caused by:|The stack trace was:|\[?\s*(INFO|DEBUG)\b)|Debug output path/.test(t)) { tail.push(t); if (tail.length > 5) tail.shift(); }
         if (d.state === 'starting' && /Waiting for flows|Running on|\[(Passed|Failed)\]/.test(line)) { d.state = 'running'; this.progress(run, d, next()); }
         const p = parseProgressLine(line);
         if (!p) continue;
@@ -163,7 +177,10 @@ export class MaestroRunner {
     }
     if (d.cancelled) return this.finishDevice(run, d, 'cancelled');
     if (code !== 0 && !(await adb.devices().catch(() => [])).some(x => x.serial === d.serial && x.state === 'device')) return this.finishDevice(run, d, 'lost', 'The device disconnected during the run.');
-    if (code !== 0 && !xml) return this.finishDevice(run, d, 'error', `Maestro exited with code ${code}. See maestro-console.log.`);
+    if (code !== 0 && !xml) {
+      const said = tail.find(l => /fail|error|exception|not connected|denied|refused/i.test(l)) ?? tail[tail.length - 1];
+      return this.finishDevice(run, d, 'error', said ? `Maestro stopped: ${said.replace(/^[\w.]+(Exception|Error):\s*/, '')}${hintFor(said)}` : `Maestro exited with code ${code}. See maestro-console.log.`);
+    }
     return this.finishDevice(run, d, 'done');
   }
 
