@@ -11,6 +11,7 @@ import { registerDeviceFarm } from './deviceFarm';
 import { registerInstallPage } from './installPage';
 import { registerMonitorPage } from './monitorPage';
 import { registerTestsPage } from './testsPage';
+import { registerMcp } from './mcpSetup';
 import { registerRecordings } from './recordingsView';
 import { launchApp, setStayAwake, setScreenTimeout } from './deviceActions';
 import { page, actionScript } from './ui';
@@ -96,6 +97,7 @@ export function activate(context: vscode.ExtensionContext) {
   registerInstallPage(vscode, context, adb);
   registerMonitorPage(vscode, context, adb, choose);
   registerTestsPage(vscode, context, adb);
+  registerMcp(vscode, context, adb);
   command('mota.refresh', refresh);
   async function deviceResults(title: string, targets: Device[], action: (d: Device) => Promise<string>) {
     if (!targets.length) return;

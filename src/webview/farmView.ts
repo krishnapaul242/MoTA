@@ -1,6 +1,7 @@
 import { consoleScript, consoleStyles } from '../adbConsole';
 import { claudeBarMarkup, claudeBarScript, claudeBarStyles } from './claudeBar';
 import { themedPage } from './page';
+import { liveTouchScript } from './liveTouch';
 
 /** Device farm webview (approved design: design-mockups/farm.html and farm-live.html). Host logic stays in deviceFarm.ts. */
 export function farmHtml(cspSource: string) {
@@ -259,8 +260,8 @@ function openView(s){const d=device(s);if(!d||!online(d))return;focus=s;
  if(frames[s]){img.src=frames[s];img.hidden=false;$('livemsg').hidden=true;}else{img.hidden=true;$('livemsg').hidden=false;$('livemsg').textContent='Connecting…';}
  canvas.hidden=true;resetDecoder();decodeErrors=0;$('gridView').hidden=true;$('liveView').hidden=false;$('livemode').textContent='Connecting…';closeMenus();render();
  $('lvPackage').innerHTML='<option value="">Loading installed apps…</option>';api.postMessage({action:'packages',serial:s});
- videoSupported().then(ok=>{if(focus!==s)return;$('livemode').textContent=ok?'Live video':'Screenshot mode';api.postMessage({action:'focus',serial:s,stream:ok});});}
-function closeView(){if(!focus)return;focus=null;resetDecoder();$('liveView').hidden=true;$('gridView').hidden=false;api.postMessage({action:'focus',serial:null});render();}
+ touchLive.on=false;videoSupported().then(ok=>{if(focus!==s)return;$('livemode').textContent=ok?'Live video':'Screenshot mode';api.postMessage({action:'focus',serial:s,stream:ok});});}
+function closeView(){if(!focus)return;focus=null;touchLive.on=false;resetDecoder();$('liveView').hidden=true;$('gridView').hidden=false;api.postMessage({action:'focus',serial:null});render();}
 // ---- clicks
 document.addEventListener('change',e=>{const t=e.target;if(t.matches('[data-select]')){const s=serialOf(t);t.checked?selected.add(s):selected.delete(s);render();}});
 document.addEventListener('click',e=>{const t=e.target;
@@ -319,14 +320,15 @@ $('live').addEventListener('change',e=>{api.postMessage({action:'live',on:e.targ
 $('textform').addEventListener('submit',e=>{e.preventDefault();const v=$('text').value;if(v&&focus){api.postMessage({action:'text',serial:focus,text:v});$('text').value='';}});
 // ---- live H.264 video (WebCodecs); screenshots are the fallback
 let down=null;const img=$('liveimg'),canvas=$('livecanvas'),ctx=canvas.getContext('2d');
+${liveTouchScript}
 let decoder=null,decoderCodec='',waitKey=true,timestamp=0,decodeErrors=0,supported;
 function videoSupported(){if(supported!==undefined)return Promise.resolve(supported);if(typeof VideoDecoder!=='function')return Promise.resolve(supported=false);
  return VideoDecoder.isConfigSupported({codec:'avc1.42e01f',optimizeForLatency:true}).then(r=>supported=!!r.supported,()=>supported=false);}
 function resetDecoder(){try{if(decoder&&decoder.state!=='closed')decoder.close();}catch{}decoder=null;decoderCodec='';waitKey=true;}
 function drawFrame(frame){if(!focus){frame.close();return;}
  if(canvas.width!==frame.displayWidth||canvas.height!==frame.displayHeight){canvas.width=frame.displayWidth;canvas.height=frame.displayHeight;}
- ctx.drawImage(frame,0,0);frame.close();if(canvas.hidden){canvas.hidden=false;img.hidden=true;$('livemsg').hidden=true;}}
-function decoderFailed(e){resetDecoder();if(++decodeErrors>=3){api.postMessage({action:'video-unsupported'});$('livemode').textContent='Screenshot mode';canvas.hidden=true;notice('Video decoding failed, so the view uses screenshots: '+(e&&e.message||e),true);}else api.postMessage({action:'video-error'});}
+ ctx.drawImage(frame,0,0);frame.close();if(canvas.hidden){canvas.hidden=false;img.hidden=true;$('livemsg').hidden=true;$('livemode').textContent=touchLive.on?'Live · scrcpy':'Live video';}}
+function decoderFailed(e){resetDecoder();if(++decodeErrors>=3){touchLive.on=false;api.postMessage({action:'video-unsupported'});$('livemode').textContent='Screenshot mode';canvas.hidden=true;notice('Video decoding failed, so the view uses screenshots: '+(e&&e.message||e),true);}else api.postMessage({action:'video-error'});}
 function onVideo(m){if(m.serial!==focus||decodeErrors>=3)return;
  if(m.key&&m.codec&&(!decoder||decoderCodec!==m.codec)){resetDecoder();
   try{decoder=new VideoDecoder({output:drawFrame,error:decoderFailed});decoder.configure({codec:m.codec,optimizeForLatency:true});decoderCodec=m.codec;}catch(e){decoderFailed(e);return;}}
@@ -344,6 +346,7 @@ for(const el of [img,canvas]){
   if(Math.hypot(p.cx-down.cx,p.cy-down.cy)<8)api.postMessage({action:'gesture',serial:focus,type:'tap',x,y});
   else api.postMessage({action:'gesture',serial:focus,type:'swipe',x,y,x2,y2,duration:performance.now()-down.t});down=null;});
  el.addEventListener('pointercancel',()=>{down=null;});}
+touchAttach([img,canvas],m=>{if(focus)api.postMessage({...m,serial:focus});});
 // ---- Maestro runs (broadcast by the shared AI host): show progress on cards and a banner
 const testRuns={};let testActive=null;
 function testState(s){const r=testRuns[testActive];if(!r||r.done)return null;const g=r.progress[s];if(!g||!r.serials.includes(s))return null;
@@ -368,8 +371,9 @@ window.addEventListener('message',e=>{const m=e.data;if(!m||!m.kind)return;
   const t=document.querySelector('tr[data-serial="'+CSS.escape(m.serial)+'"] .thumb');if(t&&t.tagName==='IMG')t.src=m.src;
   if(m.serial===focus&&canvas.hidden){img.src=m.src;img.hidden=false;$('livemsg').hidden=true;}}
  else if(m.kind==='video')onVideo(m);
- else if(m.kind==='video-reset'){if(m.serial===focus)waitKey=true;}
- else if(m.kind==='video-failed'){if(m.serial===focus){resetDecoder();canvas.hidden=true;$('livemode').textContent='Screenshot mode';notice('Live video stopped: '+m.text,true);}}
+ else if(m.kind==='video-reset'){if(m.serial===focus){if(m.session)resetDecoder();else waitKey=true;}}
+ else if(m.kind==='live-mode'){if(m.serial===focus){touchLive.on=m.engine==='scrcpy';if(!canvas.hidden)$('livemode').textContent=touchLive.on?'Live · scrcpy':'Live video';if(m.note)notice(m.note,true);}}
+ else if(m.kind==='video-failed'){if(m.serial===focus){touchLive.on=false;resetDecoder();canvas.hidden=true;$('livemode').textContent='Screenshot mode';notice('Live video stopped: '+m.text,true);}}
  else if(m.kind==='frame-error'){frameErrors[m.serial]=m.text;if(m.serial===focus&&!frames[m.serial])$('livemsg').textContent=m.text;if(!frames[m.serial])render();}
  else if(m.kind==='focus-lost'){notice('The device disconnected.',true);closeView();}
  else if(m.kind==='notice')notice(m.text,m.error);

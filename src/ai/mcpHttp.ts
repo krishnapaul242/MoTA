@@ -1,0 +1,115 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { riskOf } from './policy';
+import { describeCall } from './prompts';
+import { motaTools, type ToolDeps } from './tools';
+
+export const MCP_PATH = '/mcp';
+
+/** propose_plan shows a card in MoTA's own Claude bar; outside agents have their own approval prompts. */
+const NOT_SERVED = new Set(['propose_plan']);
+
+const INSTRUCTIONS = `MoTA controls the Android phones connected to the user's computer and runs Maestro tests on them.
+Start with list_devices and use the serials it returns. Prefer ui_tree over screenshots for finding what to tap: it is cheaper and gives exact tap centres in device pixels.
+Maestro flows live in the workspace flows folder; write_flow can only write there. run_flow takes about 40 s of Maestro start-up before the flow runs.
+Calls that delete data (clear_app_data, uninstall_app, overwriting a flow) wait for the user to approve them in VS Code.`;
+
+export interface McpDeps extends Omit<ToolDeps, 'requestPlan' | 'onScreenshot'> {
+  /** The bearer token clients must send. */
+  token: () => string;
+  /** Asks the user in VS Code before a call that deletes data; true lets it run. */
+  confirm: (tool: string, summary: string, args: Record<string, unknown>) => Promise<boolean>;
+  /** One line per tool call, for the user to see what agents do. */
+  log: (line: string) => void;
+}
+
+/** Builds the same tool definitions the Agent SDK's `tool()` would, without loading the SDK. */
+const defineTool = ((name: string, description: string, inputSchema: unknown, handler: unknown, extras?: { annotations?: unknown }) =>
+  ({ name, description, inputSchema, handler, ...(extras?.annotations ? { annotations: extras.annotations } : {}) })) as unknown as typeof Sdk.tool;
+
+/** An MCP server with MoTA's tools for outside agents (Claude Code, Cursor, Codex…). Data-loss calls need the user's approval. */
+export function buildMcpServer(deps: McpDeps, version: string): McpServer {
+  const server = new McpServer({ name: 'mota', version }, { instructions: INSTRUCTIONS });
+  const defs = motaTools(defineTool, { ...deps, requestPlan: async () => true, onScreenshot: () => undefined });
+  for (const def of defs) {
+    if (NOT_SERVED.has(def.name)) continue;
+    const handler = def.handler as (args: Record<string, unknown>, extra: unknown) => Promise<{ isError?: boolean }>;
+    server.registerTool(def.name, { description: def.description, inputSchema: def.inputSchema, ...(def.annotations ? { annotations: def.annotations } : {}) },
+      (async (args: Record<string, unknown>, extra: unknown) => {
+        const summary = describeCall(def.name, args);
+        const risk = riskOf(`mcp__mota__${def.name}`, args, { workspaceRoot: deps.workspaceRoot(), flowsFolder: deps.flowsFolder(), exists: existsSync });
+        if (risk === 'data-loss' && !(await deps.confirm(def.name, summary, args))) {
+          deps.log(`${summary} — declined`);
+          return { content: [{ type: 'text', text: 'The user declined this in VS Code. Do not retry it; ask them what they want instead.' }], isError: true };
+        }
+        const started = Date.now();
+        const result = await handler(args, extra);
+        deps.log(`${summary}${'serial' in args ? ` on ${args.serial}` : ''} — ${result?.isError ? 'error' : 'ok'} in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+        return result;
+      }) as never);
+  }
+  return server;
+}
+
+const digest = (s: string) => createHash('sha256').update(s).digest();
+/** Constant-time check of an `Authorization: Bearer <token>` header. */
+export function validBearer(header: string | undefined, token: string): boolean {
+  const m = /^Bearer\s+(\S+)\s*$/i.exec(header ?? '');
+  return !!m && !!token && timingSafeEqual(digest(m[1]), digest(token));
+}
+
+/** Only loopback host names, so a web page can't reach the server through DNS rebinding. */
+export function loopbackHost(host: string | undefined): boolean {
+  const name = (host ?? '').replace(/:\d+$/, '').toLowerCase();
+  return name === '127.0.0.1' || name === 'localhost' || name === '[::1]';
+}
+
+function reply(res: ServerResponse, status: number, message: string) {
+  res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message }, id: null }));
+}
+
+/** Streamable HTTP MCP endpoint on 127.0.0.1, stateless: each request gets its own server and transport. */
+export class McpHttpServer {
+  private server?: Server;
+  constructor(private deps: McpDeps, private version: string) {}
+
+  get port(): number | undefined { return (this.server?.address() as AddressInfo | null)?.port; }
+
+  async start(port: number): Promise<number> {
+    if (this.server) throw new Error('The MCP server is already running.');
+    const server = createServer((req, res) => { void this.handle(req, res).catch(e => { if (!res.headersSent) reply(res, 500, e instanceof Error ? e.message : String(e)); else res.end(); }); });
+    await new Promise<void>((ok, fail) => {
+      server.once('error', fail);
+      server.listen(port, '127.0.0.1', () => { server.off('error', fail); ok(); });
+    });
+    this.server = server;
+    return this.port!;
+  }
+
+  async stop(): Promise<void> {
+    const server = this.server;
+    this.server = undefined;
+    if (!server) return;
+    server.closeAllConnections();
+    await new Promise<void>(ok => server.close(() => ok()));
+  }
+
+  private async handle(req: IncomingMessage, res: ServerResponse) {
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname !== MCP_PATH) return reply(res, 404, `MoTA serves MCP at ${MCP_PATH}.`);
+    if (!loopbackHost(req.headers.host)) return reply(res, 403, 'Only local connections are allowed.');
+    // MCP clients don't send Origin; browsers always do on cross-site requests.
+    if (req.headers.origin) return reply(res, 403, 'Requests from web pages are not allowed.');
+    if (!validBearer(req.headers.authorization, this.deps.token())) return reply(res, 401, 'Missing or wrong MoTA access token. Run "MoTA: Connect AI Agents (MCP)" in VS Code to get it.');
+    if (req.method !== 'POST') return reply(res, 405, 'This server is stateless; send JSON-RPC with POST.');
+    const server = buildMcpServer(this.deps, this.version);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on('close', () => { void transport.close(); void server.close(); });
+    await server.connect(transport as never);
+    await transport.handleRequest(req, res);
+  }
+}

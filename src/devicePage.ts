@@ -7,7 +7,8 @@ import { Adb, Device } from './adb';
 import { ChildProcess } from 'node:child_process';
 import { controlsHtml } from './webview/controlsView';
 import { aiHost, AiLink, aiPoster, isAiMessage } from './webview/aiLink';
-import { ScreenMirror, streamSize } from './h264';
+import { streamSize } from './h264';
+import { liveEngine, LiveMirror, liveTouch } from './liveMirror';
 import { connectionKind, FARM_INFO_SCRIPT, gestureArgs, parseFarmInfo, FarmInfo } from './deviceFarm';
 import { HelperClient, HelperStatus, HELPER_PACKAGE } from './helperClient';
 import { downloadSession } from './recorder';
@@ -45,7 +46,7 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
     private timer:ReturnType<typeof setInterval>;
     private input=new InputRouter(adb);
     private ai:AiLink;
-    private liveOn=false;private mirror?:ScreenMirror;private shotBusy=false;private lastShot=0;private liveTimer?:ReturnType<typeof setInterval>;
+    private liveOn=false;private mirror?:LiveMirror;private shotBusy=false;private lastShot=0;private liveTimer?:ReturnType<typeof setInterval>;
     private info?:FarmInfo;private logs?:ChildProcess;private logLines:string[]=[];private logFlush?:ReturnType<typeof setTimeout>;
     constructor(readonly device:Device){
       this.root=join(context.globalStorageUri.fsPath,'device-captures',Buffer.from(device.serial).toString('hex'));
@@ -142,9 +143,11 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
         case 'live-start':this.liveOn=true;this.stopMirror();if(m.stream)this.startMirror();this.lastShot=0;return true;
         case 'video-error':this.mirror?.restart();return true;
         case 'video-unsupported':this.stopMirror();this.lastShot=0;return true;
+        case 'touch':{const t=liveTouch(m);if(t)this.mirror?.touch(t.type,t.x,t.y,t.id);return true;}
+        case 'scroll':{const t=liveTouch({...m,type:'move'});if(t)this.mirror?.scroll(t.x,t.y,Number(m.h)||0,Number(m.v)||0);return true;}
         case 'gesture':{const args=gestureArgs(m);await this.input.send(serial,args,gestureParams(args));this.lastShot=0;return true;}
-        case 'key':{if(!INPUT_KEYS.includes(m.key))throw new Error('Unknown key.');await this.input.send(serial,devicePresets[m.key].args,{type:'key',key:m.key});this.lastShot=0;return true;}
-        case 'text':{if(typeof m.text!=='string'||!m.text||m.text.length>4096)throw new Error('Enter up to 4096 characters.');await this.input.send(serial,['input','text',m.text.replace(/ /g,'%s')],{type:'text',text:m.text});this.lastShot=0;return true;}
+        case 'key':{if(!INPUT_KEYS.includes(m.key))throw new Error('Unknown key.');if(this.mirror?.key(m.key))return true;await this.input.send(serial,devicePresets[m.key].args,{type:'key',key:m.key});this.lastShot=0;return true;}
+        case 'text':{if(typeof m.text!=='string'||!m.text||m.text.length>4096)throw new Error('Enter up to 4096 characters.');if(this.mirror?.text(m.text))return true;await this.input.send(serial,['input','text',m.text.replace(/ /g,'%s')],{type:'text',text:m.text});this.lastShot=0;return true;}
         case 'info':{this.info=parseFarmInfo(await adb.shell(serial,[FARM_INFO_SCRIPT]));this.post({kind:'info',info:this.info,connection:connectionKind(serial)});return true;}
         case 'packages':await this.sendPackages();return true;
         case 'app-info':if(validPackage(String(m.package||'')))await this.sendAppInfo(m.package);return true;
@@ -160,10 +163,11 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
     }
     private startMirror(){
       const size=this.info?.width&&this.info.height?streamSize(this.info.width,this.info.height):undefined,serial=this.device.serial;
-      const mirror=this.mirror=new ScreenMirror(adb,serial,size,connectionKind(serial)==='USB'?8_000_000:4_000_000,
-        unit=>{if(this.mirror===mirror)this.post({kind:'video',serial,...unit});},
-        ()=>{if(this.mirror===mirror)this.post({kind:'video-reset',serial});},
-        text=>{if(this.mirror!==mirror)return;this.mirror=undefined;this.lastShot=0;this.post({kind:'video-failed',serial,text});});
+      const mirror=this.mirror=new LiveMirror(adb,serial,{serverPath:context.asAbsolutePath('resources/scrcpy-server-v5.0.1'),size,bitRate:connectionKind(serial)==='USB'?8_000_000:4_000_000,engine:liveEngine(vscode)},{
+        onUnit:unit=>{if(this.mirror===mirror)this.post({kind:'video',serial,...unit});},
+        onReset:session=>{if(this.mirror===mirror)this.post({kind:'video-reset',serial,session});},
+        onMode:(engine,note)=>{if(this.mirror===mirror)this.post({kind:'live-mode',serial,engine,note});},
+        onFail:text=>{if(this.mirror!==mirror)return;this.mirror=undefined;this.lastShot=0;this.post({kind:'video-failed',serial,text});}});
       mirror.start();
     }
     private stopMirror(){this.mirror?.stop();this.mirror=undefined;}

@@ -5,13 +5,13 @@ const vm = require('node:vm');
 const {Adb} = require('../out/adb');
 function harness() {
  const registered=new Map(),panels=[],quick=[],inputs=[],warnings=[],global=new Map(),workspace=new Map(),calls=[],deviceSettings=new Map();
- const context={subscriptions:[],globalState:{get:(k,d)=>global.has(k)?global.get(k):d,update:async(k,v)=>global.set(k,v)},workspaceState:{get:(k,d)=>workspace.has(k)?workspace.get(k):d,update:async(k,v)=>workspace.set(k,v)}};
+ const context={subscriptions:[],secrets:{get:async()=>undefined,store:async()=>{}},globalState:{get:(k,d)=>global.has(k)?global.get(k):d,update:async(k,v)=>global.set(k,v)},workspaceState:{get:(k,d)=>workspace.has(k)?workspace.get(k):d,update:async(k,v)=>workspace.set(k,v)}};
  const disposable=()=>({dispose(){}});
  const uri={fsPath:'/project/app.apk',path:'/project/app.apk'};
  const vscode={TreeItem:class{constructor(label){this.label=label;}},ThemeIcon:class{},EventEmitter:class{event=()=>{};fire(){}dispose(){}},ViewColumn:{One:1},ProgressLocation:{Notification:1},
   commands:{registerCommand:(k,fn)=>{registered.set(k,fn);return disposable();},executeCommand:async(k,...args)=>registered.get(k)?.(...args)},
-  workspace:{getConfiguration:()=>({get:(k,d)=>d}),findFiles:async()=>[],asRelativePath:u=>u.fsPath,createFileSystemWatcher:()=>({dispose(){},onDidCreate:disposable,onDidDelete:disposable})},
-  env:{clipboard:{writeText:async()=>{}}},window:{registerTreeDataProvider:disposable,showWarningMessage:async()=>warnings.shift(),showErrorMessage:async()=>undefined,showQuickPick:async(items)=>{const value=quick.shift();return typeof value==='function'?value(items):value;},showInputBox:async()=>inputs.shift(),showOpenDialog:async()=>[uri],showInformationMessage:async()=>undefined,withProgress:async(_o,fn)=>fn({report(){}}),createWebviewPanel:(_id,title)=>{
+  workspace:{getConfiguration:()=>({get:(k,d)=>d}),findFiles:async()=>[],asRelativePath:u=>u.fsPath,createFileSystemWatcher:()=>({dispose(){},onDidCreate:disposable,onDidDelete:disposable}),onDidChangeConfiguration:disposable},StatusBarAlignment:{Left:1,Right:2},
+  env:{clipboard:{writeText:async()=>{}}},window:{registerTreeDataProvider:disposable,createOutputChannel:()=>({appendLine(){},show(){},dispose(){}}),createStatusBarItem:()=>({show(){},hide(){},dispose(){}}),showWarningMessage:async()=>warnings.shift(),showErrorMessage:async()=>undefined,showQuickPick:async(items)=>{const value=quick.shift();return typeof value==='function'?value(items):value;},showInputBox:async()=>inputs.shift(),showOpenDialog:async()=>[uri],showInformationMessage:async()=>undefined,withProgress:async(_o,fn)=>fn({report(){}}),createWebviewPanel:(_id,title)=>{
    let handler,disposed=false;const disposeHandlers=[];
    const panel={title,webview:{html:'',postMessage:async m=>{panel.messages.push(m);return true;},onDidReceiveMessage:fn=>{handler=fn;return disposable();}},messages:[],onDidDispose:fn=>{disposeHandlers.push(fn);return disposable();},dispose:()=>{if(!disposed){disposed=true;disposeHandlers.forEach(fn=>fn());}},reveal(){},receive:async m=>handler?.(m)};
    panels.push(panel);context.subscriptions.push(panel);return panel;

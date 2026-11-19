@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, promises as fs } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,11 +15,11 @@ import {
   DEFAULT_PERMISSION, DIAGNOSIS_TOKEN_CAP, MIN_TOKEN_CAP, type ApprovalDecision, type ApprovalKind, type ConversationSummary, type HostToWebview,
   type ModelChoice, type Outcome, type Permission, type TestEvent,
 } from './protocol';
-import { motaServer } from './tools';
+import { backupFlow, motaServer } from './tools';
 
 export type Post = (message: HostToWebview) => unknown;
 export interface Link { handle(message: unknown): Promise<void>; dispose(): void }
-export interface AiHost { connect(post: Post): Link; readonly runner: MaestroRunner; dispose(): void }
+export interface AiHost { connect(post: Post): Link; readonly runner: MaestroRunner; readonly input: InputRouter; dispose(): void }
 
 export interface HostDeps {
   adb: Adb;
@@ -108,7 +108,7 @@ export class AiHostImpl implements AiHost {
   private models: ModelChoice[] = DEFAULT_MODELS;
   private modelsLoaded = false;
   private lastShot = new Map<string, string>();
-  private input: InputRouter;
+  readonly input: InputRouter;
 
   constructor(private deps: HostDeps) {
     this.input = deps.input ?? new InputRouter(deps.adb);
@@ -381,13 +381,9 @@ export class AiHostImpl implements AiHost {
 
   private onFlowWritten(conv: Conversation, file: string, before: string | undefined) {
     const name = relative(this.deps.flowsFolder(), file);
-    let caption = `Created ${name}`;
-    if (before !== undefined) {
-      const backup = join(this.deps.workspaceRoot(), '.mota', 'ai', 'flow-backups', `${name.replace(/[\\/]/g, '__')}.${Date.now()}.yaml`);
-      void fs.mkdir(join(backup, '..'), { recursive: true }).then(() => fs.writeFile(backup, before));
-      caption = `Updated ${name}; the previous version is in ${relative(this.deps.workspaceRoot(), backup)}`;
-    }
-    this.broadcast({ type: 'ai/attachment', convId: conv.convId, kind: 'flow-diff', uri: file, caption });
+    if (before === undefined) { this.broadcast({ type: 'ai/attachment', convId: conv.convId, kind: 'flow-diff', uri: file, caption: `Created ${name}` }); return; }
+    void backupFlow(this.deps.workspaceRoot(), this.deps.flowsFolder(), file, before).then(backup =>
+      this.broadcast({ type: 'ai/attachment', convId: conv.convId, kind: 'flow-diff', uri: file, caption: `Updated ${name}; the previous version is in ${relative(this.deps.workspaceRoot(), backup)}` }));
   }
 }
 

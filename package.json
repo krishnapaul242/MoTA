@@ -2,7 +2,7 @@
   "name": "mota-android",
   "displayName": "MoTA Android",
   "description": "Android device controls, screenshots, video capture, recording and replay, APK installs and diagnostics.",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "publisher": "mota-local",
   "engines": {
     "vscode": "^1.95.0"
@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.328",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "qrcode": "^1.5.4",
     "yauzl": "^3.4.0",
     "zod": "^4.6.7"
@@ -124,6 +125,11 @@
         "title": "MoTA: Run Maestro Tests",
         "shortTitle": "Run tests",
         "icon": "$(beaker)"
+      },
+      {
+        "command": "mota.mcpSetup",
+        "title": "MoTA: Connect AI Agents (MCP)",
+        "shortTitle": "Connect AI agents"
       }
     ],
     "views": {
@@ -254,6 +260,19 @@
           "default": "",
           "description": "Absolute recording directory. Empty uses .mota/recordings in the first workspace folder, or extension storage without a workspace."
         },
+        "mota.liveEngine": {
+          "type": "string",
+          "enum": [
+            "scrcpy",
+            "screenrecord"
+          ],
+          "enumDescriptions": [
+            "scrcpy server: smoother video with live touch, drag, scroll and fast typing. Falls back to screenrecord if it can't start.",
+            "Android's screenrecord: video only; taps and swipes go through adb input."
+          ],
+          "default": "scrcpy",
+          "description": "How the live view streams a device's screen."
+        },
         "mota.maestroPath": {
           "type": "string",
           "default": "",
@@ -263,6 +282,18 @@
           "type": "string",
           "default": ".maestro",
           "description": "Folder with your Maestro flows, relative to the first workspace folder or absolute."
+        },
+        "mota.mcp.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Serve MoTA's device, input, app and Maestro tools to AI agents (Claude Code, Cursor, Codex…) over MCP on 127.0.0.1. Run \"MoTA: Connect AI Agents (MCP)\" to set up an agent."
+        },
+        "mota.mcp.port": {
+          "type": "number",
+          "default": 6682,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Local port for MoTA's MCP server (http://127.0.0.1:<port>/mcp)."
         },
         "mota.ai.claudePath": {
           "type": "string",

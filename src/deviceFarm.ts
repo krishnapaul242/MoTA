@@ -9,7 +9,8 @@ import { validPackage } from './apk';
 import { launchApp } from './deviceActions';
 import { farmHtml } from './webview/farmView';
 import { aiHost, AiLink, aiPoster, isAiMessage } from './webview/aiLink';
-import { ScreenMirror, streamSize } from './h264';
+import { streamSize } from './h264';
+import { liveEngine, LiveMirror, liveTouch } from './liveMirror';
 import { HelperClient, HELPER_PACKAGE } from './helperClient';
 import { gestureParams, InputRouter } from './helperInput';
 import { AdbConsole } from './adbConsole';
@@ -96,7 +97,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
     private lastFrame = new Map<string, number>();
     private capturing = new Set<string>();
     private focus: string | undefined;
-    private mirror?: ScreenMirror;
+    private mirror?: LiveMirror;
     private live = true;
     private closed = false;
     private listing = false;
@@ -184,8 +185,12 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         }
         case 'video-error': this.mirror?.restart(); return;
         case 'video-unsupported': this.stopMirror(); if (this.focus) this.lastFrame.set(this.focus, 0); return;
+        case 'touch': { const t = liveTouch(m); if (t && m.serial === this.focus) this.mirror?.touch(t.type, t.x, t.y, t.id); return; }
+        case 'scroll': { const t = liveTouch({ ...m, type: 'move' }); if (t && m.serial === this.focus) this.mirror?.scroll(t.x, t.y, Number(m.h) || 0, Number(m.v) || 0); return; }
         case 'gesture': case 'key': case 'text': {
           const d = this.online(m.serial); if (!d) throw new Error('The device is no longer available.');
+          if (d.serial === this.focus && m.action === 'key' && KEYS.includes(m.key) && this.mirror?.key(m.key)) return;
+          if (d.serial === this.focus && m.action === 'text' && typeof m.text === 'string' && m.text && m.text.length <= 4096 && this.mirror?.text(m.text)) return;
           if (m.action === 'gesture') { const args = gestureArgs(m); await this.input.send(d.serial, args, gestureParams(args)); }
           else if (m.action === 'key') { if (!KEYS.includes(m.key)) throw new Error('Unknown key.'); await this.input.send(d.serial, devicePresets[m.key].args, { type: 'key', key: m.key }); }
           else { if (typeof m.text !== 'string' || !m.text || m.text.length > 4096) throw new Error('Enter up to 4096 characters.'); await this.input.send(d.serial, ['input', 'text', m.text.replace(/ /g, '%s')], { type: 'text', text: m.text }); }
@@ -237,10 +242,12 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
       const info = this.info.get(d.serial)?.value;
       const size = info?.width && info.height ? streamSize(info.width, info.height) : undefined;
       const serial = d.serial;
-      const mirror = this.mirror = new ScreenMirror(adb, serial, size, connectionKind(serial) === 'USB' ? 8_000_000 : 4_000_000,
-        unit => { if (this.mirror === mirror) this.post({ kind: 'video', serial, ...unit }); },
-        () => { if (this.mirror === mirror) this.post({ kind: 'video-reset', serial }); },
-        text => { if (this.mirror !== mirror) return; this.mirror = undefined; this.lastFrame.set(serial, 0); this.post({ kind: 'video-failed', serial, text }); });
+      const mirror = this.mirror = new LiveMirror(adb, serial, { serverPath: context.asAbsolutePath('resources/scrcpy-server-v5.0.1'), size, bitRate: connectionKind(serial) === 'USB' ? 8_000_000 : 4_000_000, engine: liveEngine(vscode) }, {
+        onUnit: unit => { if (this.mirror === mirror) this.post({ kind: 'video', serial, ...unit }); },
+        onReset: session => { if (this.mirror === mirror) this.post({ kind: 'video-reset', serial, session }); },
+        onMode: (engine, note) => { if (this.mirror === mirror) this.post({ kind: 'live-mode', serial, engine, note }); },
+        onFail: text => { if (this.mirror !== mirror) return; this.mirror = undefined; this.lastFrame.set(serial, 0); this.post({ kind: 'video-failed', serial, text }); },
+      });
       mirror.start();
     }
     private status(tab: string, state: 'working' | 'ok' | 'error', text: string) { this.post({ kind: 'add-status', tab, state, text }); }

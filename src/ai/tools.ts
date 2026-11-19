@@ -82,10 +82,18 @@ export function summarizeRun(run: TestRun): string {
   return out.join('\n');
 }
 
-/** MoTA's tools, served to Claude as the in-process MCP server "mota". */
-export function motaServer(sdk: typeof Sdk, deps: ToolDeps) {
+/** Copies a flow's previous content to .mota/ai/flow-backups and returns the backup's path. */
+export async function backupFlow(workspaceRoot: string, flowsFolder: string, file: string, before: string): Promise<string> {
+  const name = relative(flowsFolder, file);
+  const backup = join(workspaceRoot, '.mota', 'ai', 'flow-backups', `${name.replace(/[\\/]/g, '__')}.${Date.now()}.yaml`);
+  await fs.mkdir(join(backup, '..'), { recursive: true });
+  await fs.writeFile(backup, before);
+  return backup;
+}
+
+/** MoTA's tool definitions. `tool` is the Agent SDK's helper, or any function that builds the same definition object. */
+export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
   const { adb } = deps;
-  const tool = sdk.tool;
   const read = { annotations: { readOnlyHint: true } };
   const destructive = { annotations: { destructiveHint: true } };
   const safely = <A>(fn: (args: A) => Promise<Result>) => async (args: A) => {
@@ -236,5 +244,10 @@ export function motaServer(sdk: typeof Sdk, deps: ToolDeps) {
     tool('clear_app_data', 'Delete all data of an app on a device (logs the user out, resets it).', { serial, package: pkg }, safely(async ({ serial: s, package: p }) => text(await adb.shell(s, ['pm', 'clear', p]))), destructive),
     tool('uninstall_app', 'Uninstall an app from a device, deleting its data.', { serial, package: pkg }, safely(async ({ serial: s, package: p }) => text(await adb.run(['-s', s, 'uninstall', p]))), destructive),
   ];
-  return sdk.createSdkMcpServer({ name: 'mota', version: '1.0.0', tools });
+  return tools;
+}
+
+/** MoTA's tools, served to Claude as the in-process MCP server "mota". */
+export function motaServer(sdk: Pick<typeof Sdk, 'tool' | 'createSdkMcpServer'>, deps: ToolDeps) {
+  return sdk.createSdkMcpServer({ name: 'mota', version: '1.0.0', tools: motaTools(sdk.tool, deps) });
 }
