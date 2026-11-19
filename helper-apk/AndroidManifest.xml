@@ -1,5 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.mota.recorder" android:versionCode="4" android:versionName="0.2.2">
-    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="35" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.mota.recorder" android:versionCode="5" android:versionName="0.3.0">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -15,5 +15,15 @@
         </service>
         <provider android:name=".BridgeProvider" android:authorities="dev.mota.recorder.bridge" android:exported="true" android:permission="android.permission.DUMP" />
         <service android:name=".CaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
+        <!-- Device owner (fully managed), provisioned by QR code during phone setup. Only the system can bind these. -->
+        <receiver android:name=".DeviceOwnerReceiver" android:exported="true" android:permission="android.permission.BIND_DEVICE_ADMIN" android:label="MoTA Recorder">
+            <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin" />
+            <intent-filter><action android:name="android.app.action.DEVICE_ADMIN_ENABLED" /></intent-filter>
+        </receiver>
+        <activity android:name=".ProvisioningActivity" android:exported="true" android:permission="android.permission.BIND_DEVICE_ADMIN" android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter><action android:name="android.app.action.GET_PROVISIONING_MODE" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
+            <intent-filter><action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
+        </activity>
+        <receiver android:name=".InstallResultReceiver" android:exported="false" />
     </application>
 </manifest>

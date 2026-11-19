@@ -22,12 +22,11 @@ public class MainActivity extends Activity {
     int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);visible=this;
-        getWindow().setDecorFitsSystemWindows(false);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         getWindow().setStatusBarColor(0xFF102A43);getWindow().setNavigationBarColor(0xFF102A43);
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(0xFFF1F5F9);
         content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(22),dp(22),dp(22),dp(28));scroll.addView(content);setContentView(scroll);
-        scroll.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());content.setPadding(dp(22)+bars.left,dp(22)+bars.top,dp(22)+bars.right,dp(28)+bars.bottom);return insets;});
+        Compat.edgeToEdge(getWindow(),scroll,content,dp(22),dp(22),dp(22),dp(28));
         label("MoTA Recorder",28,0xFF102A43);
         label("Record a flow. Run it again.",16,0xFF486581);
         serviceState=label("",14,0xFF147D64);
@@ -68,7 +67,8 @@ public class MainActivity extends Activity {
     @Override protected void onResume(){super.onResume();refresh();}
     void refresh(){
         if(sessions==null)return;
-        RecorderService s=RecorderService.live;serviceState.setText(s==null?"Accessibility is off":"Accessibility ready • "+s.message);
+        RecorderService s=RecorderService.live;boolean owner=getSystemService(android.app.admin.DevicePolicyManager.class).isDeviceOwnerApp(getPackageName());
+        serviceState.setText((s==null?"Accessibility is off":"Accessibility ready • "+s.message)+(owner?"\nDevice owner • installs and permissions managed by MoTA":""));
         File[] files=SessionStore.list(this);
         if(selected==null&&files.length>0)selected=files[0];
         chosen.setText(selected==null?"No sessions yet":"Selected: "+selected.getName());sessions.removeAllViews();

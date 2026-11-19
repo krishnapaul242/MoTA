@@ -2,7 +2,7 @@ const {test}=require('node:test');const assert=require('node:assert/strict');con
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFvQAAAAASUVORK5CYII=','base64');
 async function harness(){
  const root=await mkdtemp(join(tmpdir(),'mota-device-page-')),commands=new Map(),panels=[],calls=[],copied=[],warnings=[];
- let state={protocol:1,version:'0.2.2',ready:true,recording:false,playing:false,busy:false,videoActive:false,width:100,height:200,rotation:0};
+ let state={protocol:1,version:'0.3.0',ready:true,recording:false,playing:false,busy:false,videoActive:false,width:100,height:200,rotation:0};
  const contents={'actions.json':Buffer.from('{}'),'screen.mp4':Buffer.from('test video')};
  class Client{constructor(_a,serial){this.serial=serial;}async connect(){return state;}async dispose(){calls.push({op:'dispose'});}async request(op,p={}){calls.push({op,p});if(op==='status')return state;if(op==='pauseVideo'){state={...state,videoPaused:true};return state;}if(op==='resumeVideo'){state={...state,videoPaused:false};return state;}if(op==='stop'||op==='cancelVideo'){state={...state,videoActive:false,recording:false,videoStatus:'saved'};return state;}if(op==='files')return {files:Object.entries(contents).map(([path,b])=>({path,size:b.length}))};if(op==='read')return {data:contents[p.path].subarray(p.offset).toString('base64')};return state;}}
  const uri=p=>({fsPath:p,path:p,toString:()=>p});const context={globalStorageUri:uri(root),subscriptions:[]};

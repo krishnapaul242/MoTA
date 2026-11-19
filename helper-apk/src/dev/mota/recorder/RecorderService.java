@@ -5,7 +5,6 @@ import android.app.*;
 import android.content.*;
 import android.content.res.Configuration;
 import android.graphics.*;
-import android.hardware.HardwareBuffer;
 import android.media.AudioManager;
 import android.os.*;
 import android.view.*;
@@ -46,8 +45,8 @@ public class RecorderService extends AccessibilityService {
         super.onConfigurationChanged(c);
         if(recording || playing) stopEverything("Display changed. Start a new session in this orientation.");
     }
-    int width() { return wm.getMaximumWindowMetrics().getBounds().width(); }
-    int height() { return wm.getMaximumWindowMetrics().getBounds().height(); }
+    int width() { return Compat.displaySize(wm).x; }
+    int height() { return Compat.displaySize(wm).y; }
     int rotation() { return getSystemService(android.hardware.display.DisplayManager.class).getDisplay(android.view.Display.DEFAULT_DISPLAY).getRotation(); }
     int dp(int n) { return Math.round(n*getResources().getDisplayMetrics().density); }
     void say(String s) { message=s; if(status!=null) status.setText(s); }
@@ -191,7 +190,7 @@ public class RecorderService extends AccessibilityService {
         touch=new TouchLayer();
         WindowManager.LayoutParams p=new WindowManager.LayoutParams(-1,-1,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,PixelFormat.TRANSLUCENT);
-        p.gravity=Gravity.TOP|Gravity.LEFT;p.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;p.setFitInsetsTypes(0);
+        p.gravity=Gravity.TOP|Gravity.LEFT;Compat.coverWholeScreen(p);
         wm.addView(touch,p);
         // The panel must stay above the touch layer, including after every dispatch.
         if(panel!=null) {wm.removeView(panel);wm.addView(panel,panelParams);}
@@ -293,22 +292,29 @@ public class RecorderService extends AccessibilityService {
         shotsPending++;
         // Overlays remain visible in video; hide panel briefly for still screenshots.
         if(panel!=null)panel.setAlpha(0f);
-        main.postDelayed(()-> {
-            try { takeScreenshot(Display.DEFAULT_DISPLAY,io,new TakeScreenshotCallback(){
-                @Override public void onSuccess(ScreenshotResult result) {
-                    HardwareBuffer buffer=result.getHardwareBuffer();Bitmap hardware=null,bitmap=null;boolean saved=false;
-                    try {
-                        hardware=Bitmap.wrapHardwareBuffer(buffer,result.getColorSpace());
-                        if(hardware==null)throw new IOException("Cannot read screenshot");
-                        bitmap=hardware.copy(Bitmap.Config.ARGB_8888,false);
+        Compat.FrameCallback save=(bitmap,error)->{
+            Runnable write=()->{
+                boolean saved=false;String problem=error;
+                try {
+                    if(bitmap!=null){
                         File f=new File(target.dir,filename); f.getParentFile().mkdirs();
                         try(OutputStream out=new FileOutputStream(f)){if(!bitmap.compress(Bitmap.CompressFormat.PNG,100,out))throw new IOException("PNG encoding failed");}
                         target.screenshot(filename,at,index);saved=true;
-                    }catch(Exception e){target.note("Screenshot failed: "+e.getMessage());}
-                    finally {if(bitmap!=null)bitmap.recycle();if(hardware!=null)hardware.recycle();buffer.close();final String message=saved?"Screenshot saved":"Screenshot failed; see session notes";main.post(()->shotDone(manual,message));}
-                }
-                @Override public void onFailure(int code){target.note("Screenshot denied, code "+code);main.post(()->shotDone(manual,"Screenshot unavailable ("+code+")"));}
-            }); }catch(Exception e){target.note("Screenshot failed: "+e.getMessage());shotDone(manual,"Screenshot failed");}
+                    }
+                }catch(Exception e){problem="Screenshot failed: "+e.getMessage();}
+                finally {if(bitmap!=null)bitmap.recycle();}
+                if(!saved)target.note(problem==null?"Screenshot failed":problem);
+                final String message=saved?"Screenshot saved":"Screenshot failed; see session notes";main.post(()->shotDone(manual,message));
+            };
+            try{io.execute(write);}catch(java.util.concurrent.RejectedExecutionException e){if(bitmap!=null)bitmap.recycle();main.post(()->shotDone(manual,"Screenshot failed"));}
+        };
+        main.postDelayed(()-> {
+            try {
+                if(Compat.API30)Compat.Api30.screenshot(this,io,save);
+                // Android 10 has no accessibility screenshots: grab a frame from the session's screen video instead.
+                else if(CaptureService.live!=null)CaptureService.live.grabFrame(save);
+                else save.done(null,"Screenshots on Android 10 need screen video for this session");
+            }catch(Exception e){save.done(null,"Screenshot failed: "+e.getMessage());}
         },80);
     }
     void shotDone(boolean manual,String result) {shotsPending--;if(panel!=null)panel.setAlpha(1f);updateButtons();if(manual)toast(result);}

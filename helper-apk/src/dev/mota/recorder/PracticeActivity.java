@@ -9,7 +9,7 @@ import android.graphics.*;
 /** Local surface for testing injected gestures without touching external apps. */
 public class PracticeActivity extends Activity {
     @Override public void onCreate(Bundle b){
-        super.onCreate(b);getWindow().setDecorFitsSystemWindows(false);getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);LinearLayout layout=new LinearLayout(this);layout.setOrientation(1);layout.setPadding(20,20,20,20);layout.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());layout.setPadding(20+bars.left,20+bars.top,20+bars.right,20+bars.bottom);return insets;});
+        super.onCreate(b);getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);LinearLayout layout=new LinearLayout(this);layout.setOrientation(1);layout.setPadding(20,20,20,20);Compat.edgeToEdge(getWindow(),layout,layout,20,20,20,20);
         TextView title=new TextView(this);title.setText("Practice pad • record here, then replay");title.setTextSize(20);layout.addView(title);
         final int[] count={0};Button tap=new Button(this);tap.setText("Taps: 0");layout.addView(tap);
         tap.setOnClickListener(v->{count[0]++;tap.setText("Taps: "+count[0]);});

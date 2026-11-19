@@ -58,6 +58,36 @@ public class CaptureService extends Service {
         }catch(Exception e){if(session!=null)session.note("Video failed: "+e.getMessage());if(RecorderService.live!=null)RecorderService.live.toast("Video failed: "+e.getMessage());stopSelf();}
         return START_NOT_STICKY;
     }
+    /**
+     * Android 10 has no accessibility screenshots. Mirrors the display into a short-lived ImageReader on the
+     * already-approved projection and returns the first frame. Main thread only.
+     */
+    void grabFrame(Compat.FrameCallback callback){
+        if(projection==null||closing){callback.done(null,"Screen video is not running");return;}
+        android.graphics.Point size=Compat.displaySize(getSystemService(android.view.WindowManager.class));
+        final int w=size.x,h=size.y;
+        final ImageReader reader=ImageReader.newInstance(w,h,android.graphics.PixelFormat.RGBA_8888,2);
+        final Handler handler=new Handler(Looper.getMainLooper());
+        final VirtualDisplay[] mirror={null};final boolean[] finished={false};
+        final Runnable release=()->{if(mirror[0]!=null)mirror[0].release();reader.close();};
+        reader.setOnImageAvailableListener(r->{
+            if(finished[0])return;
+            Image image=r.acquireLatestImage();if(image==null)return;
+            finished[0]=true;android.graphics.Bitmap frame=null;String error=null;
+            try{
+                Image.Plane plane=image.getPlanes()[0];
+                // Rows may be padded; decode at the padded width, then crop.
+                android.graphics.Bitmap padded=android.graphics.Bitmap.createBitmap(plane.getRowStride()/plane.getPixelStride(),h,android.graphics.Bitmap.Config.ARGB_8888);
+                padded.copyPixelsFromBuffer(plane.getBuffer());
+                frame=android.graphics.Bitmap.createBitmap(padded,0,0,w,h);if(frame!=padded)padded.recycle();
+            }catch(Exception e){error="Screenshot failed: "+e.getMessage();}
+            finally{image.close();release.run();}
+            callback.done(frame,error);
+        },handler);
+        try{mirror[0]=projection.createVirtualDisplay("MoTA screenshot",w,h,getResources().getDisplayMetrics().densityDpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,null);}
+        catch(Exception e){finished[0]=true;release.run();callback.done(null,"Screenshot failed: "+e.getMessage());return;}
+        handler.postDelayed(()->{if(!finished[0]){finished[0]=true;release.run();callback.done(null,"Screenshot timed out");}},2000);
+    }
     void setPaused(boolean paused)throws Exception{
         if(!started||closing||recorder==null)throw new IOException("Screen recording is not active");
         if(videoPaused==paused)return;

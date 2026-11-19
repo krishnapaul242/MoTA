@@ -1,6 +1,6 @@
 # MoTA Recorder helper
 
-An original, dependency-free Android helper for recording actions **performed directly on an unrooted phone or emulator**, replaying them, and exporting screenshots and optional screen video. Android 11 / API 30 or newer. MIT license, inherited from the repository. No third-party source or APK is bundled.
+An original, dependency-free Android helper for recording actions **performed directly on an unrooted phone or emulator**, replaying them, and exporting screenshots and optional screen video. Android 10 / API 29 or newer (see *Android 10* below for what differs). MIT license, inherited from the repository. No third-party source or APK is bundled.
 
 ## Install and use
 
@@ -95,3 +95,43 @@ Pass `--exercise-service` to temporarily enable this helper's accessibility serv
 Integration validation: the MoTA 0.3.0 desktop suite passes 46 tests, and helper 0.2.0 passed 14 real-emulator bridge checks (authentication, path restrictions, passive start/stop, finalized files and display mismatch rejection). These do not establish full physical-input or MediaProjection coverage on every device; the standalone capture limitations above still apply.
 
 The floating overlay has collapsed and expanded layouts. Collapsed shows only a record/stop button and an expand chevron; expanded shows all controls and a collapse chevron. Expand the menu and drag its status label to reposition it. The selected layout is remembered and expansion stays within screen bounds.
+
+## Device owner (0.3.0)
+
+On phones where ADB is restricted (Xiaomi's "USB debugging (Security settings)" needs a SIM and Mi account), MoTA Recorder can be the device owner of a dedicated test phone. It then performs installs, permission grants and device settings itself, at the desktop's request. Device owner cannot inject input: taps, swipes and text still use the accessibility service.
+
+**Provision by QR (no ADB, no SIM):** factory reset the phone, tap the first setup screen six times, connect to Wi-Fi and scan a QR code containing the payload from:
+
+```sh
+./helper-apk/build.sh
+node helper-apk/provisioning-qr.js --url https://<host>/mota-recorder-0.3.0.apk [--wifi-ssid NAME]   # password via MOTA_WIFI_PASSWORD
+```
+
+The phone must download the APK from that URL. The checksum is of the signing certificate, so it stays valid across rebuilds with the same `debug.keystore`. Some regional firmware omits the QR setup option. On phones where the OEM allows it and there are no accounts, `adb shell dpm set-device-owner dev.mota.recorder/.DeviceOwnerReceiver` also works (Xiaomi rejects it without the Security setting).
+
+Bridge operations (all fail with a clear error unless MoTA is device owner, except `adminStatus`):
+
+- `adminStatus`: `deviceOwner`, `adminActive`, `sdk`, `manufacturer`, `model`, `accessibilityReady`, `stayAwake`, `updatePolicy`. Plain `status` also reports `deviceOwner`.
+- `adminInstallBegin` (`size`, optional `packageName`) → `session`; `adminInstallWrite` (`session`, `offset`, base64 `data` ≤ 4 MiB, optional split `name` ending `.apk`); `adminInstallCommit`; poll `adminInstallResult` until `state` is not `pending`; `adminInstallAbandon`. No confirmation on the phone.
+- `adminUninstall` / `adminUninstallResult` (`packageName`). MoTA cannot uninstall itself while it is device owner.
+- `adminPermission` (`packageName`, `permission`, `state: granted|denied|default`): runtime permissions only.
+- `adminStayAwake` (`enabled`), `adminKeyguard` (`disabled`; requires no PIN/pattern), `adminUpdatePolicy` (`policy: postpone|window|default`, `startMinute`/`endMinute` for window), `adminLock`, `adminReboot`.
+- `adminRelease` (`confirm: "release"`): restores the lock screen and update policy and removes device owner. Undoing a QR-provisioned setup otherwise needs a factory reset.
+
+Becoming device owner restarts the helper process, so clients reconnect afterwards. Emulator check (sets and then releases device owner; needs an emulator with no accounts):
+
+```sh
+npm run compile && ./helper-apk/tests/build.sh
+node helper-apk/tests/device-owner-smoke.js emulator-5554
+```
+
+## Android 10 (API 29)
+
+Since 0.3.0 the helper installs on Android 10. Android 11+ APIs are isolated in `Compat.Api30`, so Android 10 never loads them. Differences on Android 10:
+
+- **Screenshots** need screen video in the same session. Android 10 has no accessibility screenshots, so the helper mirrors one frame from the approved screen-capture session. Without video, `shot` records the note "Screenshots on Android 10 need screen video for this session" and returns nothing.
+- Overlays use the short-edges cutout mode. Activities draw edge-to-edge using the older system-UI flags.
+- `uiautomator dump` and other UiAutomation clients suspend all accessibility services on Android 10, which interrupts a recording or replay. The `SmokeTest` instrumentation also cannot rebind the service on Android 10. (It currently times out on the Android 17 emulator too, including with the 0.2.2 build.)
+- Device-owner permission grants validate the package and permission first. On Android 10 the system call hangs instead of failing for permissions that do not exist on that version, such as `POST_NOTIFICATIONS`.
+
+Validated on an Android 10 emulator: bridge smoke (14 checks), device-owner smoke (22), gesture replay through the bridge, and a video-frame screenshot at full display resolution. Not yet validated on a physical MIUI device.

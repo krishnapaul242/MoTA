@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
 import { Adb } from './adb';
 export const HELPER_PACKAGE = 'dev.mota.recorder';
-export const HELPER_VERSION = '0.2.2';
+export const HELPER_VERSION = '0.3.0';
 export interface HelperStatus {
   protocol: number; version: string; ready: boolean; mode?: string; recording?: boolean; playing?: boolean;
   paused?: boolean; busy?: boolean; videoActive?: boolean; videoPaused?: boolean; overlayExpanded?: boolean; message?: string; width: number; height: number;

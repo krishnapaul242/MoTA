@@ -28,7 +28,7 @@ final class Bridge {
     void serve(LocalSocket socket){
         try(LocalSocket connection=socket){
             int uid=connection.getPeerCredentials().getUid();if(uid!=0&&uid!=2000)return;
-            ByteArrayOutputStream bytes=new ByteArrayOutputStream();InputStream in=connection.getInputStream();int b;
+            ByteArrayOutputStream bytes=new ByteArrayOutputStream();InputStream in=new BufferedInputStream(connection.getInputStream(),65536);int b;
             while((b=in.read())!=-1&&b!='\n'){if(bytes.size()>=8*1024*1024)throw new IOException("Request too large");bytes.write(b);}
             JSONObject request=new JSONObject(bytes.toString("UTF-8"));
             if(!MessageDigest.isEqual(token.getBytes("UTF-8"),request.optString("token").getBytes("UTF-8")))return;
@@ -39,6 +39,8 @@ final class Bridge {
     }
     JSONObject handle(JSONObject request)throws Exception {
         String op=request.getString("op");JSONObject p=request.optJSONObject("params");if(p==null)p=new JSONObject();
+        // Device-owner ops do not need the accessibility service and run off the main thread (installs can be large).
+        if(DeviceOwner.handles(op))return DeviceOwner.handle(context,op,p);
         if(op.equals("sessions")){
             JSONArray list=new JSONArray();for(File f:SessionStore.list(context)){try{JSONObject d=SessionStore.read(f);list.put(new JSONObject().put("id",f.getName()).put("count",d.getJSONArray("actions").length()).put("finished",d.optBoolean("finished")).put("videoStatus",d.optString("videoStatus")));}catch(Exception ignored){}}
             return new JSONObject().put("sessions",list);
@@ -92,7 +94,8 @@ final class Bridge {
         }}
     }
     JSONObject status(RecorderService s)throws Exception{
-        JSONObject r=new JSONObject().put("protocol",1).put("version","0.2.2").put("ready",s!=null).put("videoActive",CaptureService.active).put("videoPaused",CaptureService.live!=null&&CaptureService.live.videoPaused);
+        JSONObject r=new JSONObject().put("protocol",1).put("version","0.3.0").put("ready",s!=null)
+            .put("deviceOwner",context.getSystemService(android.app.admin.DevicePolicyManager.class).isDeviceOwnerApp(context.getPackageName())).put("videoActive",CaptureService.active).put("videoPaused",CaptureService.live!=null&&CaptureService.live.videoPaused);
         if(s!=null){r.put("overlayExpanded",s.overlayExpanded).put("recording",s.recording).put("playing",s.playing).put("paused",s.paused).put("busy",s.busy||s.shotsPending>0).put("message",s.message)
             .put("width",s.width()).put("height",s.height()).put("rotation",s.rotation()).put("replayIndex",s.replayIndex).put("replayTotal",s.replayTotal);
             if(s.session!=null)r.put("session",s.session.dir.getName()).put("captureOwner",s.session.data.optString("captureOwner")).put("mode",s.passiveRecording?"adb":"overlay").put("actions",s.session.actions.length()).put("uptimeStartMs",s.session.data.optLong("uptimeStartMs")).put("videoStatus",s.session.data.optString("videoStatus"));
