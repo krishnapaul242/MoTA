@@ -8,6 +8,7 @@ import { detectApkPackage, validPackage, packageFromFailure, isInstallConflict }
 import { ChildProcess } from 'node:child_process';
 import { Adb, Device, escapeHtml as html, mergeKnownDevices, parseServices, validAddress } from './adb';
 import { registerDevicePage } from './devicePage';
+import { registerDeviceFarm } from './deviceFarm';
 import { registerRecordings } from './recordingsView';
 import { launchApp, setStayAwake, setScreenTimeout } from './deviceActions';
 import { page, actionScript } from './ui';
@@ -62,7 +63,8 @@ export function activate(context: vscode.ExtensionContext) {
       if (files.status === 'fulfilled') apks.set(files.value.sort((a,b) => a.fsPath.localeCompare(b.fsPath)).map(f => new Tree(f.path.split('/').pop()!, undefined, f)));
     } finally { refreshing = false; }
   }
-  async function choose(item?: Tree): Promise<Device[]> {
+  async function choose(item?: {device?: Device; targets?: Device[]}): Promise<Device[]> {
+    if (item?.targets) return item.targets.filter(d => d.state === 'device');
     if (item?.device?.state === 'device') return [item.device];
     const all = (await adb.devices()).filter(d => d.state === 'device');
     if (!all.length) throw new Error('No ready devices. Connect a device and accept its debugging prompt.');
@@ -88,6 +90,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(devices, apks, vscode.window.registerTreeDataProvider('mota.devices', devices), vscode.window.registerTreeDataProvider('mota.apks', apks));
   registerRecordings(vscode, context, adb, choose);
   registerDevicePage(vscode, context, adb, choose);
+  registerDeviceFarm(vscode, context, adb, refresh);
   command('mota.refresh', refresh);
   async function deviceResults(title: string, targets: Device[], action: (d: Device) => Promise<string>) {
     if (!targets.length) return;
@@ -188,10 +191,10 @@ export function activate(context: vscode.ExtensionContext) {
     }
     if (!closed) panel.webview.html = page('<h2>QR code expired</h2><p>Check that mDNS is allowed on your Wi-Fi network, then try a fresh code.</p><div class="actions"><button data-action="pair">Generate new QR</button><button class="secondary" data-action="connect">Connect by address</button></div>',actionScript);
   });
-  command('mota.install', async (item?: Tree) => {
+  command('mota.install', async (item?: {uri?: vscode.Uri; targets?: Device[]}) => {
     const uri = item?.uri || (await vscode.window.showOpenDialog({filters:{'Android package':['apk']},canSelectMany:false}))?.[0];
     if (!uri) return;
-    const targets = await choose();
+    const targets = await choose(item?.targets ? {targets:item.targets} : undefined);
     if (!targets.length) return;
     const presentation = await vscode.window.showQuickPick([{label:'Editor page',description:'Options, per-device progress and recovery',value:'page'},{label:'Notification',description:'Compact progress with an Open install page action',value:'notification'}],{title:'Where should installation run?'});
     if (!presentation) return;

@@ -2,7 +2,7 @@
   "name": "mota-android",
   "displayName": "MoTA Android",
   "description": "Android device controls, screenshots, video capture, recording and replay, APK installs and diagnostics.",
-  "version": "0.4.1",
+  "version": "0.5.1",
   "publisher": "mota-local",
   "engines": {
     "vscode": "^1.95.0"
@@ -106,6 +106,12 @@
         "shortTitle": "Set up recorder helper"
       },
       {
+        "command": "mota.farm",
+        "title": "MoTA: Open Device Farm",
+        "shortTitle": "Device farm",
+        "icon": "$(layout)"
+      },
+      {
         "command": "mota.device",
         "title": "MoTA: Device Controls",
         "shortTitle": "Device controls",
@@ -126,6 +132,11 @@
     },
     "menus": {
       "view/title": [
+        {
+          "command": "mota.farm",
+          "when": "view == mota.devices",
+          "group": "navigation@0"
+        },
         {
           "command": "mota.pair",
           "when": "view == mota.devices",
