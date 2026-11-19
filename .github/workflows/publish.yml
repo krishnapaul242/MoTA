@@ -1,0 +1,61 @@
+name: Publish
+
+# Publishes the extension to the VS Code Marketplace with trusted publishing (OIDC):
+# GitHub issues a short-lived token for this workflow, and the Marketplace exchanges it for a
+# publish credential. No personal access token is stored. The Marketplace's trusted publisher
+# entry must name this repository and this workflow file (publish.yml).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      pre_release:
+        description: Publish as a pre-release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check the release tag matches package.json
+        if: github.event_name == 'release'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME does not match package.json version $version."
+            exit 1
+          fi
+
+      - name: Test
+        run: npm run compile && node --test --test-force-exit test/*.test.js
+
+      - name: Publish
+        env:
+          PRE_RELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || github.event_name == 'workflow_dispatch' && inputs.pre_release }}
+        run: |
+          flags="--oidc --no-dependencies"
+          if [ "$PRE_RELEASE" = "true" ]; then flags="$flags --pre-release"; fi
+          npx --yes @vscode/vsce@4.1.1 publish $flags

@@ -3,13 +3,33 @@
   "displayName": "MoTA Android",
   "description": "Android device controls, screenshots, video capture, recording and replay, APK installs and diagnostics.",
   "version": "0.7.3",
-  "publisher": "mota-local",
+  "publisher": "krishna-paul-india-sde",
   "engines": {
     "vscode": "^1.95.0"
   },
   "categories": [
+    "Testing",
+    "Debuggers",
     "Other"
   ],
+  "keywords": [
+    "android",
+    "adb",
+    "device farm",
+    "scrcpy",
+    "maestro",
+    "react native",
+    "screen mirroring",
+    "mobile testing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/krishnapaul242/MoTA.git"
+  },
+  "bugs": {
+    "url": "https://github.com/krishnapaul242/MoTA/issues"
+  },
+  "homepage": "https://github.com/krishnapaul242/MoTA#readme",
   "main": "./dist/extension.js",
   "extensionKind": [
     "workspace"
