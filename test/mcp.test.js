@@ -113,8 +113,9 @@ test('bearer and host checks', () => {
 
 test('client configs carry the URL and token', () => {
   const c = clientConfigs('http://127.0.0.1:6682/mcp', 'T');
-  assert.deepEqual(c.claudeArgs.slice(-2), ['mota', 'http://127.0.0.1:6682/mcp']);
-  assert.ok(c.claudeArgs.includes('Authorization: Bearer T'));
+  // Name and URL come before --header, whose values are variadic.
+  assert.deepEqual(c.claudeArgs.slice(-4), ['mota', 'http://127.0.0.1:6682/mcp', '--header', 'Authorization: Bearer T']);
+  assert.match(c.claudeCommand, /mota http:\/\/127\.0\.0\.1:6682\/mcp --header "Authorization: Bearer T"$/);
   assert.deepEqual(JSON.parse(c.cursor), {mcpServers: {mota: {url: 'http://127.0.0.1:6682/mcp', headers: {Authorization: 'Bearer T'}}}});
   assert.match(c.codex, /\[mcp_servers\.mota\]\nurl = "http:\/\/127\.0\.0\.1:6682\/mcp"/);
 });

@@ -52,14 +52,18 @@ function get(url, method = 'GET') {
 test('download server serves only the APK at its secret path, then closes', async () => {
   const apk = join(__dirname, '..', 'resources', 'mota-recorder.apk');
   const downloads = [], closes = [];
-  const server = new HelperDownloadServer(apk, '127.0.0.1', from => downloads.push(from), reason => closes.push(reason));
+  let downloaded;
+  const firstDownload = new Promise(r => { downloaded = r; });
+  const server = new HelperDownloadServer(apk, '127.0.0.1', from => { downloads.push(from); downloaded(); }, reason => closes.push(reason));
+  try {
   const url = await server.url;
   assert.match(url, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}\/mota-recorder\.apk$/);
   const ok = await get(url);
   assert.equal(ok.status, 200);
   assert.equal(ok.type, 'application/vnd.android.package-archive');
   assert.deepEqual(ok.body, fs.readFileSync(apk));
-  await new Promise(r => setImmediate(r));
+  // The server reports a download on its response's 'finish', which can come after the client has the body.
+  await firstDownload;
   assert.deepEqual(downloads, ['127.0.0.1']);
   const origin = new URL(url).origin;
   assert.equal((await get(origin + '/')).status, 404);
@@ -70,6 +74,7 @@ test('download server serves only the APK at its secret path, then closes', asyn
   server.close('stopped'); server.close('again');
   assert.deepEqual(closes, ['stopped']);
   await assert.rejects(get(url));
+  } finally { server.close('cleanup'); }
 });
 
 test('download server expires on its own', async () => {

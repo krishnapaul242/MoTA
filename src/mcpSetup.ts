@@ -15,8 +15,9 @@ export const mcpUrl = (port: number) => `http://127.0.0.1:${port}${MCP_PATH}`;
 /** Client configuration snippets for the URL and token. */
 export function clientConfigs(url: string, token: string) {
   return {
-    claudeArgs: ['mcp', 'add', '--transport', 'http', '--scope', 'user', '--header', `Authorization: Bearer ${token}`, 'mota', url],
-    claudeCommand: `claude mcp add --transport http --scope user --header "Authorization: Bearer ${token}" mota ${url}`,
+    // --header takes several values, so it goes after the name and URL or it swallows them.
+    claudeArgs: ['mcp', 'add', '--transport', 'http', '--scope', 'user', 'mota', url, '--header', `Authorization: Bearer ${token}`],
+    claudeCommand: `claude mcp add --transport http --scope user mota ${url} --header "Authorization: Bearer ${token}"`,
     cursor: JSON.stringify({ mcpServers: { mota: { url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2),
     codex: `[mcp_servers.mota]\nurl = "${url}"\nhttp_headers = { "Authorization" = "Bearer ${token}" }\n`,
   };
