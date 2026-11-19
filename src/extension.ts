@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { detectApkPackage, validPackage, packageFromFailure, isInstallConflict } from './apk';
 import { ChildProcess } from 'node:child_process';
-import { Adb, Device, escapeHtml as html, parseServices, validAddress } from './adb';
+import { Adb, Device, escapeHtml as html, mergeKnownDevices, parseServices, validAddress } from './adb';
 import { registerDevicePage } from './devicePage';
 import { registerRecordings } from './recordingsView';
 import { launchApp, setStayAwake, setScreenTimeout } from './deviceActions';
@@ -52,12 +52,12 @@ export function activate(context: vscode.ExtensionContext) {
       const [found, files] = await Promise.allSettled([adb.devices(), vscode.workspace.findFiles(config().get('apkGlob', '**/*.apk'), '**/{node_modules,.git}/**')]);
       if (found.status === 'fulfilled') {
         const previous = context.globalState.get<Device[]>('knownDevices', []);
-        const merged = [...found.value, ...previous.filter(d => !found.value.some(f => f.serial === d.serial))].slice(0, 30);
+        const merged = mergeKnownDevices(found.value, previous);
         if (JSON.stringify(previous) !== JSON.stringify(merged)) await context.globalState.update('knownDevices', merged);
         const addresses = context.globalState.get<string[]>('addresses',[]);
         const combined = [...new Set([...addresses,...found.value.map(d => d.serial).filter(validAddress)])].slice(0,20);
         if (JSON.stringify(addresses) !== JSON.stringify(combined)) await context.globalState.update('addresses',combined);
-        devices.set([...found.value.map(d => new Tree(d.model, d)), ...merged.filter(d => !found.value.some(f => f.serial === d.serial)).map(d => new Tree(d.model, {...d,state:'remembered'}))]);
+        devices.set([...found.value.map(d => new Tree(d.model, d)), ...merged.filter(d => !found.value.includes(d)).map(d => new Tree(d.model, {...d,state:'remembered'}))]);
       } else devices.set([new Tree('ADB unavailable — check mota.adbPath')]);
       if (files.status === 'fulfilled') apks.set(files.value.sort((a,b) => a.fsPath.localeCompare(b.fsPath)).map(f => new Tree(f.path.split('/').pop()!, undefined, f)));
     } finally { refreshing = false; }

@@ -6,6 +6,17 @@ export function parseDevices(output: string): Device[] {
     return serial && state ? [{ serial, state, model: details.find(d => d.startsWith('model:'))?.slice(6).replace(/_/g, ' ') || serial }] : [];
   });
 }
+/** Merge live devices into history. Wireless debugging gives one phone a new serial (IP:port or mDNS name) on each connection, so history keeps one entry per model, most recent first, and offline entries without a known model are not remembered. */
+export function mergeKnownDevices(found: Device[], previous: Device[], limit = 30): Device[] {
+  const key = (d: Device) => d.model === d.serial ? `serial:${d.serial}` : `model:${d.model}`;
+  const seen = new Set(found.flatMap(d => [key(d), `serial:${d.serial}`]));
+  const remembered = previous.filter(d => {
+    if (d.model === d.serial || seen.has(key(d)) || seen.has(`serial:${d.serial}`)) return false;
+    seen.add(key(d)); seen.add(`serial:${d.serial}`);
+    return true;
+  });
+  return [...found, ...remembered].slice(0, Math.max(limit, found.length));
+}
 export function parseServices(output: string) {
   return output.split(/\r?\n/).flatMap(l => {
     const [name, type, address] = l.trim().split(/\s+/);

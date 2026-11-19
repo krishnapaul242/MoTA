@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {parseDevices,parseServices,validAddress,escapeHtml,Adb} = require('../out/adb');
+const {parseDevices,parseServices,validAddress,escapeHtml,Adb,mergeKnownDevices} = require('../out/adb');
 test('device discovery preserves state and serials for multiple targets', () => {
   assert.deepEqual(parseDevices('List of devices attached\nusb1 device product:x model:Pixel_8 transport_id:1\n192.168.1.3:4444 offline\nusb2 unauthorized\n'),[
     {serial:'usb1',state:'device',model:'Pixel 8'}, {serial:'192.168.1.3:4444',state:'offline',model:'192.168.1.3:4444'}, {serial:'usb2',state:'unauthorized',model:'usb2'}]);
@@ -20,4 +20,9 @@ test('ADB invocation passes each argument literally without a shell', async () =
 test('ADB command failures expose diagnostics', async () => {
  const adb = new Adb(()=>process.execPath);
  await assert.rejects(adb.run(['-e','process.stderr.write("device offline");process.exit(1)']),/device offline/);
+});
+test('device history keeps one entry per phone across changing wireless serials', () => {
+  const live = [{serial:'192.168.1.5:41000',state:'device',model:'Pixel 8'},{serial:'usb2',state:'device',model:'Pixel 8'}];
+  const history = [{serial:'192.168.1.5:39000',state:'device',model:'Pixel 8'},{serial:'10.0.0.2:5555',state:'device',model:'SM A515F'},{serial:'10.0.0.2:4444',state:'device',model:'SM A515F'},{serial:'10.0.0.9:5555',state:'offline',model:'10.0.0.9:5555'},{serial:'usb2',state:'device',model:'Pixel 8'}];
+  assert.deepEqual(mergeKnownDevices(live,history).map(d=>d.serial),['192.168.1.5:41000','usb2','10.0.0.2:5555']);
 });
