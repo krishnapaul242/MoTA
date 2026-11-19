@@ -19,13 +19,13 @@ npm install
 npm test
 ```
 
-Open this directory in VS Code and press F5 to launch an Extension Development Host. Open your React Native project in that host. Expand **Devices** and **APKs** in Explorer.
+`npm test` compiles TypeScript to `out/` (used by the tests) and bundles the extension with esbuild into `dist/` (what VS Code loads). Run `npm run compile` after changing code, then open this directory in VS Code and press F5 to launch an Extension Development Host. Open your React Native project in that host. Expand **Devices** and **APKs** in Explorer.
 
 To build an installable extension:
 
 ```
 npm run package
-code --install-extension mota-android-0.2.3.vsix
+code --install-extension releases/mota-android-<version>.vsix
 ```
 
 ## Pair and connect

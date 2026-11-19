@@ -232,3 +232,9 @@ test('model list folds Claude Code\'s default row into the empty id', () => {
   assert.deepEqual(modelChoices([{value: 'default', displayName: 'Default (recommended)'}, {value: 'opus', displayName: 'Opus 5.5'}, {value: 'haiku'}]),
     [{id: '', label: 'Default (recommended)'}, {id: 'opus', label: 'Opus 5.5'}, {id: 'haiku', label: 'haiku'}]);
 });
+
+test('the bundled agent SDK next to dist/extension.js wins over node_modules', () => {
+  const {sdkPath} = require('../out/ai/host');
+  assert.equal(sdkPath('/x/dist', p => p === '/x/dist/agent-sdk.mjs'), '/x/dist/agent-sdk.mjs');
+  assert.match(sdkPath('/x/out', () => false), /node_modules\/@anthropic-ai\/claude-agent-sdk\//);
+});

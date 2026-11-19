@@ -71,8 +71,13 @@ const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 /** Native `import()` (TypeScript would turn it into `require`, which can't load the ESM-only SDK). */
 const nativeImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
 let sdkModule: Promise<typeof Sdk> | undefined;
+/** The SDK bundled next to dist/extension.js (scripts/bundle.js), or the installed package when running from out/. */
+export function sdkPath(dir = __dirname, exists = existsSync): string {
+  const bundled = join(dir, 'agent-sdk.mjs');
+  return exists(bundled) ? bundled : require.resolve('@anthropic-ai/claude-agent-sdk');
+}
 export function loadSdk(): Promise<typeof Sdk> {
-  return sdkModule ??= nativeImport(pathToFileURL(require.resolve('@anthropic-ai/claude-agent-sdk')).href) as Promise<typeof Sdk>;
+  return sdkModule ??= nativeImport(pathToFileURL(sdkPath()).href) as Promise<typeof Sdk>;
 }
 
 /** The local Claude Code CLI: the setting, the installer's locations, then PATH. */

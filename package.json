@@ -10,7 +10,7 @@
   "categories": [
     "Other"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "extensionKind": [
     "workspace"
   ],
@@ -20,10 +20,12 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p .",
+    "compile": "tsc -p . && npm run bundle",
+    "bundle": "node scripts/bundle.js",
+    "vscode:prepublish": "npm run compile",
     "watch": "tsc -w -p .",
     "test": "npm run compile && node --test test/*.test.js",
-    "package": "vsce package --allow-missing-repository"
+    "package": "vsce package --allow-missing-repository --no-dependencies -o releases/"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.328",
@@ -37,6 +39,7 @@
     "@types/qrcode": "^1.5.5",
     "@types/vscode": "^1.95.0",
     "@vscode/vsce": "^3.0.0",
+    "esbuild": "0.28.2",
     "typescript": "^5.7.0"
   },
   "contributes": {
