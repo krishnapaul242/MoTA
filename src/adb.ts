@@ -30,7 +30,8 @@ export class Adb {
   constructor(private executable: () => string) {}
   run(args: string[], timeout = 15000): Promise<string> {
     return new Promise((resolve, reject) => execFile(this.executable(), args, { timeout, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
-      if (err) reject(new Error(stderr.trim() || stdout.trim() || err.message)); else resolve(stdout.trim());
+      if (err && err.killed && !stderr.trim()) reject(new Error(`adb ${args.join(' ')} timed out after ${Math.round(timeout / 1000)} s. The ADB server may be stuck; restart it.`));
+      else if (err) reject(new Error(stderr.trim() || stdout.trim() || err.message)); else resolve(stdout.trim());
     }));
   }
   shell(serial: string, args: string[]) { return this.run(['-s', serial, 'shell', ...args]); }

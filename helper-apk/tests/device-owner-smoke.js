@@ -14,7 +14,7 @@ async function poll(fn){const until=Date.now()+60000;for(;;){const r=await fn();
 (async()=>{
  const adb=new Adb(()=>executable);let client=new HelperClient(adb,serial);let tests=0,owner=false,stayOn;
  try{
-  await adb.run(['-s',serial,'install','--no-incremental','-r',join(dist,'mota-recorder-0.3.0.apk')]);
+  await adb.run(['-s',serial,'install','--no-incremental','-r',join(dist,'mota-recorder-0.4.0.apk')]);
   await adb.run(['-s',serial,'uninstall',samplePackage]).catch(()=>{});
   stayOn=await adb.shell(serial,['settings','get','global','stay_on_while_plugged_in']);
   step='connect';await client.dispose();client=await connect(adb);

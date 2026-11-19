@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Prints the Android Enterprise QR provisioning payload that makes MoTA Recorder the device owner.
-// Usage: node helper-apk/provisioning-qr.js --url https://host/mota-recorder-0.3.0.apk [--apk path] [--wifi-ssid NAME]
+// Usage: node helper-apk/provisioning-qr.js --url https://host/mota-recorder-0.4.0.apk [--apk path] [--wifi-ssid NAME]
 // The Wi-Fi password, if any, is read from MOTA_WIFI_PASSWORD so it stays out of shell history.
 'use strict';
 const { execFileSync } = require('child_process');
@@ -11,7 +11,7 @@ const path = require('path');
 const args = process.argv.slice(2);
 const arg = name => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const url = arg('--url');
-const apk = arg('--apk') || path.join(__dirname, 'dist', 'mota-recorder-0.3.0.apk');
+const apk = arg('--apk') || path.join(__dirname, 'dist', 'mota-recorder-0.4.0.apk');
 const ssid = arg('--wifi-ssid');
 if (!url || !/^https?:\/\/\S+$/.test(url)) { console.error('Pass --url with the http(s) address the phone downloads the APK from.'); process.exit(1); }
 if (!fs.existsSync(apk)) { console.error(`APK not found: ${apk}. Run helper-apk/build.sh first.`); process.exit(1); }

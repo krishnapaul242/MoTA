@@ -22,16 +22,16 @@ cp build/base.apk build/unsigned.apk
 if [[ ! -f debug.keystore ]]; then
   "$JDK_PATH/bin/keytool" -genkeypair -keystore debug.keystore -storepass android -keypass android -alias androiddebugkey -dname 'CN=MoTA Development,O=MoTA,C=IN' -keyalg RSA -keysize 2048 -validity 10000 -noprompt
 fi
-"$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out dist/mota-recorder-0.3.0.apk build/aligned.apk
-"$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" verify --verbose dist/mota-recorder-0.3.0.apk
-shasum -a 256 dist/mota-recorder-0.3.0.apk > dist/SHA256SUMS
-printf '\nAPK: %s/dist/mota-recorder-0.3.0.apk\n' "$PWD"
+"$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out dist/mota-recorder-0.4.0.apk build/aligned.apk
+"$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" verify --verbose dist/mota-recorder-0.4.0.apk
+shasum -a 256 dist/mota-recorder-0.4.0.apk > dist/SHA256SUMS
+printf '\nAPK: %s/dist/mota-recorder-0.4.0.apk\n' "$PWD"
 
 mkdir -p ../resources
-cp dist/mota-recorder-0.3.0.apk ../resources/mota-recorder.apk
+cp dist/mota-recorder-0.4.0.apk ../resources/mota-recorder.apk
 # Metadata for QR provisioning: URL-safe base64 (no padding) of the signing certificate's SHA-256.
-CERT_HEX="$("$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" verify --print-certs dist/mota-recorder-0.3.0.apk 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+CERT_HEX="$("$JDK_PATH/bin/java" -jar "$TOOLS/lib/apksigner.jar" verify --print-certs dist/mota-recorder-0.4.0.apk 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
 [[ "$CERT_HEX" =~ ^[0-9a-f]{64}$ ]] || { echo 'Could not read the signing certificate' >&2; exit 1; }
 CHECKSUM="$(printf '%s' "$CERT_HEX" | xxd -r -p | base64 | tr '+/' '-_' | tr -d '=')"
 APK_SHA="$(shasum -a 256 ../resources/mota-recorder.apk | cut -d' ' -f1)"
-printf '{"version":"0.3.0","sha256":"%s","signatureChecksum":"%s"}\n' "$APK_SHA" "$CHECKSUM" > ../resources/mota-recorder.json
+printf '{"version":"0.4.0","sha256":"%s","signatureChecksum":"%s"}\n' "$APK_SHA" "$CHECKSUM" > ../resources/mota-recorder.json

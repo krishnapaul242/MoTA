@@ -8,6 +8,7 @@ import { TouchDevice } from './inputEvents';
 import { launchApp } from './deviceActions';
 import { validPackage } from './apk';
 import { page } from './ui';
+import { installHelper } from './helperInput';
 
 export function registerRecordings(vscode: typeof VSCode, context: VSCode.ExtensionContext, adb: Adb,
   choose: (item?: any) => Promise<Device[]>) {
@@ -91,12 +92,11 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
             const d = await this.device(); const apk = context.asAbsolutePath('resources/mota-recorder.apk');
             if (!(await fs.stat(apk)).isFile()) throw new Error('Bundled helper APK is missing. Reinstall the MoTA extension.');
             const sdk = Number(await adb.shell(d.serial, ['getprop', 'ro.build.version.sdk']));
-            if (!Number.isInteger(sdk) || sdk < 30) throw new Error('The recorder helper requires Android 11 or newer.');
-            const result = await adb.run(['-s', d.serial, 'install', '--no-incremental', '-r', apk], 180000);
-            if (!/\bSuccess\b/.test(result)) throw new Error(result || 'Helper installation was not confirmed.');
+            if (!Number.isInteger(sdk) || sdk < 29) throw new Error('The recorder helper requires Android 10 or newer.');
+            const via = await installHelper(adb, d.serial, apk);
             await this.client?.dispose(); this.client = undefined;
             await adb.shell(d.serial, ['am', 'start', '-n', `${HELPER_PACKAGE}/.MainActivity`]);
-            this.message = `Helper ${HELPER_VERSION} installed. On the device, enable its accessibility service. Use Refresh status when ready.`; break;
+            this.message = `Helper ${HELPER_VERSION} installed${via === 'device-owner' ? ' by the managed helper (adb install is blocked on this phone)' : ''}. On the device, enable its accessibility service if it is off. Use Refresh status when ready.`; break;
           }
           case 'device': {
             if (this.active || this.replaying) throw new Error('Stop the active session before switching devices.');

@@ -40,7 +40,7 @@ For USB, enable USB debugging and accept the phone's authorization prompt. Offli
 
 Some phones restrict ADB. For example, Xiaomi's "USB debugging (Security settings)" needs a SIM and Mi account before `adb install`, `pm grant` or input injection work. A dedicated test phone can instead have the MoTA helper as its device owner. In the device farm, choose **Add device → Managed setup**, optionally enter Wi-Fi details, and select **Create setup QR**. Factory reset the phone, tap its first setup screen six times, and scan the code. Don't add a Google or Mi account. The phone downloads the helper from this computer and finishes setup with it.
 
-The extension serves only the bundled helper, at a random path on the chosen local address, for 15 minutes or until you select **Stop serving** or close the farm. The QR pins the helper's signing certificate, so the phone rejects any other file. The phone must reach this computer on the local network, and macOS may ask to allow incoming connections. A Wi-Fi password in the QR is readable by anyone who scans it. Afterwards, turn on Developer options, USB debugging and the helper's accessibility service on the phone. The farm tags it **Managed**. **Farm defaults** keeps managed phones awake while charging and postpones system updates for 30 days. Device-owner setup needs Android 10 or newer and is undone by a factory reset. Some regional firmware omits the six-tap QR option.
+The extension serves only the bundled helper, at a random path on the chosen local address, for 15 minutes or until you select **Stop serving** or close the farm. The QR pins the helper's signing certificate, so the phone rejects any other file. The phone must reach this computer on the local network, and macOS may ask to allow incoming connections. A Wi-Fi password in the QR is readable by anyone who scans it. Afterwards, turn on Developer options, USB debugging and the helper's accessibility service on the phone. The farm tags it **Managed**. **Farm defaults** keeps managed phones awake while charging and postpones system updates for 30 days. On phones that reject `adb shell input` (Xiaomi's `INJECT_EVENTS` error), taps, swipes, keys and text in the farm and device pages go through the helper's accessibility service instead. MIUI also blocks enabling that service over ADB, so turn it on once on the phone. **MoTA: Set Up Recorder Helper** updates a managed phone's helper through the helper itself when `adb install` is blocked. Device-owner setup needs Android 10 or newer and is undone by a factory reset. Some regional firmware omits the six-tap QR option.
 
 ## APKs, logs and performance
 
@@ -130,3 +130,39 @@ Click a ready device in the Devices list, or run **MoTA: Device Controls**. Its 
 Deep links accept an optional package and preserve URI query parameters. App controls support launch, force stop, install, clear data and uninstall; destructive presets ask for confirmation. Device inputs include navigation, volume, wake/sleep, taps, swipes and basic text. Diagnostics reuse logcat and live stats. File actions push/pull a chosen file. The advanced runner accepts Android shell commands or device-scoped ADB arguments; it always fixes the selected serial and never invokes a host shell. An interactive device shell is available for long-running work.
 
 Video capture is separate from input record/replay. The page owns only the screen capture it started and cancels it when closed. Captures stay in extension storage until explicitly saved elsewhere. Protected screens can block capture; H.264 playback depends on the VS Code build. If frame copying is attempted while seeking, wait for the seek to finish first.
+
+## Maestro test runs
+
+Put your Maestro flows in `.maestro/` (or set **mota.maestroFlowsFolder**). MoTA lists the top-level flows, or the ones matched by `flows:` in `config.yaml`, with their tags. Select devices and flows and run them: every selected flow runs on every selected device. Each device gets one Maestro process, which takes about 40 seconds to start before the first flow. Progress comes from Maestro's output, and the final result for each flow comes from its JUnit report. Failures show the failed step, its error and a screenshot. A device that disconnects is marked as lost, and its remaining flows are marked as not run. Cancel stops the whole Maestro process tree.
+
+Runs are saved in `.mota/test-runs/<run>/<device>/`: `report.xml`, `maestro-console.log`, `results.json` and Maestro's `artifacts/` (screenshots, screen hierarchy, device log and `commands.json`). After each run, MoTA stops Maestro's driver app on the phone so that MoTA's own UI tools can use UI automation again. Install the Maestro CLI first; MoTA uses `~/.maestro/bin/maestro`, the `maestro` command on PATH, or **mota.maestroPath**.
+
+## Claude assistant
+
+The Claude bar runs on the Claude Code installed on this computer, through the Claude Agent SDK, and uses that installation's login. Usage counts against that account. Install Claude Code and run `claude` once to sign in. MoTA looks for it in `~/.local/bin`, `~/.claude/local` or on PATH, or you can set **mota.ai.claudePath**.
+
+Claude works through MoTA's own tools:
+- devices: list, info, screenshot, UI tree, log tail
+- input: tap, swipe, text, keys, launch app, wake
+- Maestro: list, read and write flows, run one flow, start a test run, read results
+- apps: install APK, clear data, uninstall
+
+Claude can read files in the workspace, but it can write only inside the flows folder. It has no shell and no web access, and it loads none of your other Claude Code settings or connectors.
+
+Permissions:
+- **Ask once per task** (default): Claude shows a plan card before acting on a device or changing files. After you approve it, small steps run without further prompts.
+- **Ask only for data loss**: Claude acts without asking, except as below.
+- **Read-only**: Claude only looks and explains.
+
+Clearing app data, uninstalling and overwriting a flow always ask again, unless you chose *Allow for this conversation*. Devices outside the conversation's selection always ask. A replaced flow's previous version is saved in `.mota/ai/flow-backups/`.
+
+The token cap is a hard stop. As a guide:
+- a quick action or question: 5–15K tokens
+- diagnosing a failure: 15–40K
+- a run summary: 10–30K
+- writing or fixing a flow: 60–150K
+- exploring the app: 200K or more
+
+Claude is also told its budget so it can pace itself. MoTA's short system prompt keeps a small task to about 2–10K tokens. Screenshots are shrunk so their longest side is at most **mota.ai.screenshotWidth** (960) pixels, which is about 500–1,300 tokens each. Screenshots and logs go to Claude, so use test accounts on farm phones. The UI tree hides text typed into fields.
+
+Android can't list the elements of a screen that keeps animating (`could not get idle state`). In that case Claude uses screenshots instead.

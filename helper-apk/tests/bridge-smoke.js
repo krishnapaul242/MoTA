@@ -6,7 +6,7 @@ const executable=process.env.MOTA_TEST_ADB||join(process.env.ANDROID_SDK_ROOT||j
 (async()=>{
  const adb=new Adb(()=>executable),client=new HelperClient(adb,serial);let tests=0;let previous,previousEnabled;
  try{
- const status=await client.connect();assert.equal(status.protocol,1);tests++;assert.equal(status.version,'0.3.0');tests++;
+ const status=await client.connect();assert.equal(status.protocol,1);tests++;assert.equal(status.version,'0.4.0');tests++;
  const sessions=await client.request('sessions');assert.ok(Array.isArray(sessions.sessions));tests++;
  await assert.rejects(client.request('read',{session:'valid-id',path:'../secret',offset:0}),/Invalid file path/);tests++;
  const token=client.token;client.token='wrong';await assert.rejects(client.request('status'),/closed|disconnected/);client.token=token;tests++;

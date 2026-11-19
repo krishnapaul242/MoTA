@@ -2,18 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
 import { Adb } from './adb';
 export const HELPER_PACKAGE = 'dev.mota.recorder';
-export const HELPER_VERSION = '0.3.0';
+export const HELPER_VERSION = '0.4.0';
 export interface HelperStatus {
   protocol: number; version: string; ready: boolean; mode?: string; recording?: boolean; playing?: boolean;
   paused?: boolean; busy?: boolean; videoActive?: boolean; videoPaused?: boolean; overlayExpanded?: boolean; message?: string; width: number; height: number;
   rotation: number; captureOwner?: string; videoStatus?: string; session?: string; actions?: number; uptimeStartMs?: number; replayIndex?: number; replayTotal?: number;
 }
 export interface HelperFile { path: string; size: number }
-export function parseBootstrap(output: string) {
+/** `anyVersion` is only for updating an older helper in place. */
+export function parseBootstrap(output: string, anyVersion = false) {
   const match = output.match(/\bbridge=([A-Za-z0-9+/=]+)/);
   if (!match) throw new Error('Helper bridge unavailable. Run Set up recorder helper, then enable its accessibility service.');
   const value = JSON.parse(Buffer.from(match[1], 'base64').toString('utf8'));
-  if (value.protocol !== 1 || value.version !== HELPER_VERSION || value.socket !== 'mota.recorder' || typeof value.token !== 'string' || value.token.length < 40) throw new Error('Helper version mismatch. Run Set up recorder helper to update it.');
+  if (value.protocol !== 1 || (!anyVersion && value.version !== HELPER_VERSION) || value.socket !== 'mota.recorder' || typeof value.token !== 'string' || value.token.length < 40) throw new Error('Helper version mismatch. Run Set up recorder helper to update it.');
   return value as { protocol: number; version: string; socket: string; token: string; ready: boolean };
 }
 /** Short-lived loopback sockets; secrets stay in memory and never enter command arguments. */
@@ -22,9 +23,9 @@ export class HelperClient {
   private token = '';
   private disposed = false;
   constructor(private adb: Adb, readonly serial: string) {}
-  async connect() {
+  async connect(options: { anyVersion?: boolean } = {}) {
     if (this.disposed) throw new Error('Helper connection closed.');
-    const info = parseBootstrap(await this.adb.shell(this.serial, ['content', 'query', '--uri', 'content://dev.mota.recorder.bridge/bootstrap']));
+    const info = parseBootstrap(await this.adb.shell(this.serial, ['content', 'query', '--uri', 'content://dev.mota.recorder.bridge/bootstrap']), options.anyVersion);
     this.token = info.token;
     const result = await this.adb.run(['-s', this.serial, 'forward', 'tcp:0', `localabstract:${info.socket}`]);
     if (!/^\d+$/.test(result) || +result < 1 || +result > 65535) throw new Error('ADB did not allocate a helper forwarding port.');

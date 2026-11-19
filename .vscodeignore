@@ -7,3 +7,7 @@ node_modules/@types/**
 
 helper-apk/**
 .mota/**
+.claude/**
+node_modules/@anthropic-ai/claude-agent-sdk-*/**
+node_modules/@anthropic-ai/sdk/**
+design-mockups/**

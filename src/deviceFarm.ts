@@ -3,11 +3,16 @@ import * as QRCode from 'qrcode';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Adb, Device, mergeKnownDevices, parseServices, validAddress } from './adb';
-import { captureScreenshot, shellLiteral } from './deviceControl';
+import { captureScreenshot, deepLinkArgs, shellLiteral } from './deviceControl';
 import { devicePresets } from './devicePage';
-import { page } from './ui';
+import { validPackage } from './apk';
+import { launchApp } from './deviceActions';
+import { farmHtml } from './webview/farmView';
+import { aiHost, AiLink, aiPoster, isAiMessage } from './webview/aiLink';
 import { ScreenMirror, streamSize } from './h264';
 import { HelperClient, HELPER_PACKAGE } from './helperClient';
+import { gestureParams, InputRouter } from './helperInput';
+import { AdbConsole } from './adbConsole';
 import { HelperDownloadServer, lanAddresses, parseDeviceOwner, provisioningPayload, readHelperMetadata } from './provisioning';
 
 export interface FarmInfo { manufacturer: string; android: string; sdk: string; width: number | null; height: number | null; battery: number | null; charging: boolean; managed: boolean }
@@ -98,15 +103,21 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
     private lastList = 0;
     private timer: ReturnType<typeof setInterval>;
     private qrToken = 0;
+    private input = new InputRouter(adb);
     private provisioning?: HelperDownloadServer;
+    private console = new AdbConsole(adb, m => this.post(m),
+      async (message, detail, action) => await vscode.window.showWarningMessage(message, { modal: true, detail }, action) === action,
+      () => this.afterChange());
+    private ai: AiLink;
 
     constructor() {
       this.panel = vscode.window.createWebviewPanel('mota.farm', 'MoTA · Device farm', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
-      this.panel.webview.html = page(body, script);
+      this.panel.webview.html = farmHtml(this.panel.webview.cspSource);
+      this.ai = aiHost(context, adb).connect(aiPoster(vscode, this.panel, () => this.closed));
       this.panel.webview.onDidReceiveMessage(m => { void this.message(m).catch(e => this.notice(e instanceof Error ? e.message : String(e), true)); });
       this.timer = setInterval(() => this.tick(), 400);
     }
-    dispose() { this.closed = true; this.qrToken++; this.provisioning?.close('closed'); this.stopMirror(); clearInterval(this.timer); }
+    dispose() { this.closed = true; this.qrToken++; this.provisioning?.close('closed'); void this.input.dispose(); this.console.dispose(); this.ai.dispose(); this.stopMirror(); clearInterval(this.timer); }
     private stopMirror() { this.mirror?.stop(); this.mirror = undefined; }
     private post(m: unknown) { if (!this.closed) void this.panel.webview.postMessage(m); }
     private notice(text: string, error = false) { this.post({ kind: 'notice', text, error }); }
@@ -155,7 +166,10 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
     }
 
     private async message(m: any) {
-      if (!m || typeof m.action !== 'string' || this.closed) return;
+      if (this.closed) return;
+      if (isAiMessage(m)) return this.ai.handle(m);
+      if (!m || typeof m.action !== 'string') return;
+      if (m.action.startsWith('console-')) return this.console.message(m, [...this.devices.values()].filter(d => d.state === 'device'));
       switch (m.action) {
         case 'ready': case 'refresh': this.lastList = 0; await this.list(); return;
         case 'live': this.live = !!m.on; return;
@@ -172,9 +186,9 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         case 'video-unsupported': this.stopMirror(); if (this.focus) this.lastFrame.set(this.focus, 0); return;
         case 'gesture': case 'key': case 'text': {
           const d = this.online(m.serial); if (!d) throw new Error('The device is no longer available.');
-          if (m.action === 'gesture') await shellLiteral(adb, d.serial, gestureArgs(m));
-          else if (m.action === 'key') { if (!KEYS.includes(m.key)) throw new Error('Unknown key.'); await shellLiteral(adb, d.serial, devicePresets[m.key].args); }
-          else { if (typeof m.text !== 'string' || !m.text || m.text.length > 4096) throw new Error('Enter up to 4096 characters.'); await shellLiteral(adb, d.serial, ['input', 'text', m.text.replace(/ /g, '%s')]); }
+          if (m.action === 'gesture') { const args = gestureArgs(m); await this.input.send(d.serial, args, gestureParams(args)); }
+          else if (m.action === 'key') { if (!KEYS.includes(m.key)) throw new Error('Unknown key.'); await this.input.send(d.serial, devicePresets[m.key].args, { type: 'key', key: m.key }); }
+          else { if (typeof m.text !== 'string' || !m.text || m.text.length > 4096) throw new Error('Enter up to 4096 characters.'); await this.input.send(d.serial, ['input', 'text', m.text.replace(/ /g, '%s')], { type: 'text', text: m.text }); }
           return;
         }
         case 'reconnect': {
@@ -192,6 +206,31 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         case 'provision-addresses': this.post({ kind: 'provision-addresses', list: lanAddresses(), serving: !!this.provisioning }); return;
         case 'provision-start': return this.provisionStart(m);
         case 'provision-stop': this.provisioning?.close('stopped'); return;
+        case 'open-tests': await vscode.commands.executeCommand('mota.tests'); return;
+        case 'copy': await vscode.env.clipboard.writeText(String(m.text ?? '').slice(0, 500)); this.notice('Copied to the clipboard.'); return;
+        case 'packages': {
+          const d = this.online(m.serial); if (!d) return;
+          try {
+            const list = (await adb.shell(d.serial, ['pm', 'list', 'packages', '-3'])).split(/\r?\n/).map(l => l.trim().replace(/^package:/, '')).filter(validPackage).sort();
+            this.post({ kind: 'packages', serial: d.serial, list, last: context.workspaceState.get('launchPackage', '') });
+          } catch (e) { this.post({ kind: 'packages', serial: d.serial, list: [], error: `Couldn't list apps: ${errorText(e)}` }); }
+          return;
+        }
+        case 'app-launch': case 'app-stop': {
+          const d = this.online(m.serial); if (!d) throw new Error('The device is no longer available.');
+          const pkg = String(m.package ?? ''); if (!validPackage(pkg)) throw new Error('Choose an installed app first.');
+          await context.workspaceState.update('launchPackage', pkg);
+          if (m.action === 'app-launch') this.notice(await launchApp(adb, d.serial, pkg));
+          else { await shellLiteral(adb, d.serial, ['am', 'force-stop', pkg]); this.notice(`${pkg} stopped.`); }
+          this.lastFrame.set(d.serial, 0); return;
+        }
+        case 'deep-link': {
+          const d = this.online(m.serial); if (!d) throw new Error('The device is no longer available.');
+          const pkg = typeof m.package === 'string' && validPackage(m.package) ? m.package : '';
+          const out = await shellLiteral(adb, d.serial, deepLinkArgs(String(m.uri ?? ''), pkg));
+          if (/Error:|Exception|unable to resolve|Status:\s*(?!ok\b)\w+/i.test(out)) throw new Error(out.split(/\r?\n/).find(l => /Error|Exception|unable|Status/i.test(l)) || out);
+          this.notice('Deep link opened.'); return;
+        }
       }
     }
     private startMirror(d: Device) {
@@ -309,11 +348,11 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
     private async bulk(command: string, serials: unknown[]) {
       const targets = [...new Set(serials)].map(s => this.online(s)).filter((d): d is Device => !!d);
       if (!targets.length) { this.notice('Select at least one available device.', true); return; }
-      const delegated: Record<string, string> = { install: 'mota.install', launch: 'mota.launch', monitor: 'mota.stats', logs: 'mota.logcat', awake: 'mota.awake', controls: 'mota.device' };
+      const delegated: Record<string, string> = { tests: 'mota.tests', install: 'mota.install', launch: 'mota.launch', monitor: 'mota.stats', logs: 'mota.logcat', awake: 'mota.awake', controls: 'mota.device' };
       if (delegated[command]) { await vscode.commands.executeCommand(delegated[command], { targets }); return; }
       let run: (d: Device) => Promise<unknown>;
       let label: string;
-      if (KEYS.includes(command)) { label = devicePresets[command].label; run = d => shellLiteral(adb, d.serial, devicePresets[command].args); }
+      if (KEYS.includes(command)) { label = devicePresets[command].label; run = d => this.input.send(d.serial, devicePresets[command].args, { type: 'key', key: command }); }
       else if (command === 'reboot') {
         const ok = await vscode.window.showWarningMessage(`Reboot ${targets.length} device${targets.length > 1 ? 's' : ''}?`, { modal: true, detail: targets.map(d => `${d.model} (${d.serial})`).join('\n') }, 'Reboot');
         if (ok !== 'Reboot') return;
@@ -338,211 +377,3 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
   }
 }
 
-const body = `<style>
-body{max-width:none;padding:24px}
-.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
-.toolbar input[type=search]{flex:1;min-width:200px}
-.toolbar label{display:flex;gap:6px;align-items:center;font-size:13px}
-.selbar{position:sticky;top:0;z-index:2;display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;margin-bottom:16px;border-radius:10px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-focusBorder)}
-.selbar[hidden]{display:none}.selbar b{margin-right:6px}
-button.small{padding:5px 10px;font-size:12px}
-.farm{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
-.dev{background:var(--vscode-sideBar-background);border:1px solid var(--vscode-panel-border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
-.dev.selected{border-color:var(--vscode-focusBorder);box-shadow:0 0 0 1px var(--vscode-focusBorder)}
-.screen{position:relative;background:#000;display:flex;align-items:center;justify-content:center;height:300px;cursor:pointer}
-.screen img{max-width:100%;max-height:100%;object-fit:contain}
-.screen .msg{color:#bbb;font-size:12px;padding:16px;text-align:center}
-.dev:not(.device) .screen{cursor:default;background:var(--vscode-editor-background)}
-.status{position:absolute;top:8px;left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(0,0,0,.65);color:#fff;display:flex;gap:5px;align-items:center}
-.status i{width:8px;height:8px;border-radius:50%;display:inline-block}
-.s-device i{background:#3fb950}.s-unauthorized i{background:#d29922}.s-offline i{background:#f85149}.s-remembered i{background:#8b949e}.s-focus i{background:#58a6ff}
-.pick{position:absolute;top:6px;right:8px;width:18px;height:18px;cursor:pointer}
-.meta{padding:12px 14px;display:flex;flex-direction:column;gap:4px;flex:1}
-.meta h3{margin:0;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sub{font-size:12px;color:var(--vscode-descriptionForeground)}
-.tags{display:flex;gap:5px;flex-wrap:wrap;margin:4px 0}
-.tag{font-size:11px;padding:1px 7px;border-radius:9px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}
-.serial{font-family:var(--vscode-editor-font-family);font-size:11px;color:var(--vscode-descriptionForeground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cardacts{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto;padding-top:8px}
-.empty{padding:40px;text-align:center;border:1px dashed var(--vscode-panel-border);border-radius:12px}
-#notice{position:fixed;bottom:16px;right:16px;max-width:520px;padding:10px 14px;border-radius:8px;background:var(--vscode-notifications-background,var(--vscode-editorWidget-background));border:1px solid var(--vscode-panel-border);font-size:13px;z-index:20}
-#notice.error{border-color:var(--vscode-errorForeground);color:var(--vscode-errorForeground)}
-#overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10;display:flex;align-items:center;justify-content:center;padding:20px}
-#overlay[hidden],#add[hidden]{display:none}
-#add{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11;display:flex;align-items:center;justify-content:center;padding:20px}
-.dialog{background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:14px;padding:20px 22px;width:min(560px,100%);max-height:100%;overflow:auto}
-.addtabs{display:flex;gap:4px;border-bottom:1px solid var(--vscode-panel-border);margin:12px 0 16px}
-.addtabs button{background:none;color:var(--vscode-foreground);border-radius:0;border-bottom:2px solid transparent;padding:8px 12px}
-.addtabs button[aria-selected=true]{border-bottom-color:var(--vscode-focusBorder);font-weight:600}
-.dialog form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}.dialog form label{display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1;min-width:150px}
-.qrbox{display:flex;justify-content:center;margin:8px 0}.qrbox img{background:#fff;border-radius:10px;width:240px;height:240px}.qrbox img.big{width:300px;height:300px}
-.dialog select{width:100%}
-.st{min-height:1.5em;font-size:13px}.st.ok{color:var(--vscode-testing-iconPassed,#3fb950)}.st.error{color:var(--vscode-errorForeground)}.st.working{color:var(--vscode-descriptionForeground)}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.dialog ol{padding-left:20px;margin:6px 0 12px}
-.viewer{display:flex;gap:20px;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:14px;padding:18px;max-height:100%;max-width:100%}
-.live{position:relative;background:#000;border-radius:10px;display:flex;align-items:center;justify-content:center;min-width:200px}
-.live img,.live canvas{max-height:calc(100vh - 80px);max-width:min(60vw,700px);touch-action:none;user-select:none;-webkit-user-drag:none;cursor:crosshair;border-radius:10px}
-.side{display:flex;flex-direction:column;gap:10px;width:240px}
-.side .keys{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.side input{width:100%}
-@media (max-width:700px){.viewer{flex-direction:column}.side{width:auto}.live img,.live canvas{max-width:100%}}
-</style>
-<header><div><small>ANDROID WORKSPACE</small><h1>Device farm</h1><p class="muted" id="summary">Looking for devices…</p></div>
-<div class="actions"><button data-top="add">Add device</button><button class="secondary" data-top="refresh">Refresh</button></div></header>
-<div class="toolbar">
-<input type="search" id="search" placeholder="Search model, manufacturer, Android version or serial" aria-label="Search devices">
-<select id="status" aria-label="Status filter"><option value="all">All devices</option><option value="device">Available</option><option value="attention">Needs attention</option><option value="remembered">Disconnected</option></select>
-<button class="secondary small" data-top="select-all">Select all available</button>
-<label><input type="checkbox" id="live" checked> Live screens</label>
-</div>
-<div class="selbar" id="selbar" hidden><b id="selcount"></b>
-<button class="small" data-bulk="install">Install APK</button><button class="small" data-bulk="launch">Launch app</button>
-<button class="small secondary" data-bulk="home">Home</button><button class="small secondary" data-bulk="back">Back</button><button class="small secondary" data-bulk="wake">Wake</button><button class="small secondary" data-bulk="sleep">Sleep</button>
-<button class="small secondary" data-bulk="monitor">Monitor</button><button class="small secondary" data-bulk="logs">Logs</button><button class="small secondary" data-bulk="awake">Keep awake</button><button class="small secondary" data-bulk="managed" title="Managed phones only: stay awake while charging and postpone system updates for 30 days">Farm defaults</button>
-<button class="small secondary" data-bulk="disconnect">Disconnect</button><button class="small secondary" data-bulk="reboot">Reboot</button>
-<button class="small secondary" data-top="clear">Clear selection</button></div>
-<p class="error" id="error"></p>
-<div class="farm" id="farm"></div>
-<div id="overlay" hidden><div class="viewer" role="dialog" aria-modal="true" aria-labelledby="vtitle">
-<div class="live"><canvas id="livecanvas" hidden role="img" aria-label="Live device video. Click to tap, drag to swipe."></canvas><img id="liveimg" alt="Live device screen. Click to tap, drag to swipe." draggable="false"><span class="msg" id="livemsg">Connecting…</span></div>
-<div class="side"><div><h2 id="vtitle"></h2><div class="sub" id="vsub"></div></div>
-<small class="muted">Click to tap · drag to swipe. <span id="livemode"></span></small>
-<div class="keys"><button class="secondary small" data-key="back">Back</button><button class="secondary small" data-key="home">Home</button><button class="secondary small" data-key="recents">Recents</button><button class="secondary small" data-key="wake">Wake</button><button class="secondary small" data-key="volumeUp">Volume +</button><button class="secondary small" data-key="volumeDown">Volume −</button><button class="secondary small" data-key="sleep">Sleep</button></div>
-<form id="textform" class="row" style="gap:6px;flex-wrap:nowrap"><input id="text" placeholder="Type text on device" aria-label="Text to type"><button class="small">Send</button></form>
-<button class="secondary" data-view="controls">Full controls</button><button class="secondary" data-view="logs">Logs</button><button data-view="close">Close</button>
-</div></div></div>
-<div id="add" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="addtitle">
-<div class="row"><h2 id="addtitle" style="margin:0">Add a device</h2><button class="secondary small" data-add="close">Close</button></div>
-<nav class="addtabs" role="tablist"><button role="tab" data-tab="qr" aria-selected="true">QR code</button><button role="tab" data-tab="code" aria-selected="false">Pairing code</button><button role="tab" data-tab="address" aria-selected="false">IP address</button><button role="tab" data-tab="usb" aria-selected="false">USB</button><button role="tab" data-tab="managed" aria-selected="false">Managed setup</button></nav>
-<section data-pane="qr"><ol><li>Connect the phone to the same Wi-Fi as this computer.</li><li>On the phone (Android 11+), open <b>Developer options → Wireless debugging → Pair device with QR code</b>.</li><li>Scan this code.</li></ol>
-<div class="qrbox"><img id="qrimg" alt="ADB pairing QR code" hidden></div><p class="st" id="st-qr" role="status"></p><button class="secondary small" data-add="qr-new">New QR code</button></section>
-<section data-pane="code" hidden><ol><li>On the phone, open <b>Developer options → Wireless debugging → Pair device with pairing code</b>.</li><li>Enter the IP address &amp; port and the 6-digit code it shows.</li></ol>
-<form id="codeform"><label>IP address &amp; port<input id="pairaddr" placeholder="192.168.1.10:37099" autocomplete="off"></label><label style="max-width:130px">Pairing code<input id="paircode" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="off"></label><button>Pair</button></form><p class="st" id="st-code" role="status"></p></section>
-<section data-pane="address" hidden><p class="muted">For a phone that is already paired, or one switched to <code>adb tcpip</code> mode. Use the IP address &amp; port on the main <b>Wireless debugging</b> screen, not the pairing port. The port changes whenever Wireless debugging restarts.</p>
-<form id="addrform"><label>IP address &amp; port<input id="addr" placeholder="192.168.1.10:41235" autocomplete="off"></label><button>Connect</button></form><div class="chips" id="recent"></div><p class="st" id="st-address" role="status"></p></section>
-<section data-pane="usb" hidden><ol><li>On the phone, open <b>Settings → About phone</b> and tap <b>Build number</b> seven times to enable Developer options.</li><li>Turn on <b>Developer options → USB debugging</b>.</li><li>Plug the phone in and accept the <b>Allow USB debugging</b> prompt.</li></ol><p class="muted">USB devices appear in the farm automatically.</p></section>
-<section data-pane="managed" hidden><p class="muted">Makes MoTA the device owner of a dedicated test phone, so it can install apps and grant permissions without a SIM, Mi account or USB security settings. <b>This needs a factory reset.</b></p>
-<ol><li>Factory reset the phone. Don't add a Google or Mi account.</li><li>On the first setup screen, tap the same spot six times to open the QR scanner.</li><li>Scan the code. The phone downloads the MoTA helper from this computer and finishes setup with it.</li><li>Turn on Developer options and USB debugging, plug the phone in, and turn on MoTA Recorder in Accessibility settings.</li></ol>
-<form id="provform"><label>This computer's address<select id="provaddr" aria-label="Network address the phone downloads from"></select></label><label>Wi-Fi name (optional)<input id="provssid" autocomplete="off" maxlength="32"></label><label>Wi-Fi password<input id="provpass" type="password" autocomplete="off" maxlength="63"></label><button>Create setup QR</button></form>
-<p class="muted">The phone must reach this computer on the same network. macOS may ask whether VS Code can accept incoming connections. Anyone who scans the code can read a Wi-Fi password in it.</p>
-<div class="qrbox"><img id="provimg" class="big" alt="Device-owner setup QR code" hidden></div><p class="st" id="st-managed" role="status"></p><button class="secondary small" data-add="prov-stop" id="provstop" hidden>Stop serving</button></section>
-</div></div>
-<div id="notice" hidden role="status"></div>`;
-
-const script = `
-const $=id=>document.getElementById(id);
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let devices=[],last='',focus=null,noticeTimer;const selected=new Set(),frames={},frameErrors={};
-const label={device:'Available',unauthorized:'Unauthorized',offline:'Offline',remembered:'Disconnected'};
-function matches(d){const q=$('search').value.trim().toLowerCase(),f=$('status').value;
- if(f==='device'&&d.state!=='device')return false;if(f==='remembered'&&d.state!=='remembered')return false;if(f==='attention'&&!['unauthorized','offline'].includes(d.state))return false;
- const i=d.info||{};return !q||[d.model,d.serial,d.kind,i.manufacturer,i.android&&'android '+i.android,i.managed&&'managed'].some(v=>v&&String(v).toLowerCase().includes(q));}
-function card(d){const i=d.info||{},on=d.state==='device',st=focus===d.serial?'focus':d.state;
- const screen=on?(frames[d.serial]?'<img data-serial="'+esc(d.serial)+'" src="'+frames[d.serial]+'" alt="Screen of '+esc(d.model)+'">':'<span class="msg">'+esc(frameErrors[d.serial]||($('live').checked?'Loading screen…':'Live screens off'))+'</span>')
-  :'<span class="msg">'+(d.state==='unauthorized'?'Unlock the device and accept the USB debugging prompt.':d.state==='offline'?'Device is offline. Reconnect it or restart ADB.':'Not connected. Wireless ports change, so reconnect or pair again.')+'</span>';
- const tags=[d.kind,i.managed?'Managed':'',i.battery!=null?i.battery+'%'+(i.charging?' ⚡':''):'',i.width?i.width+'×'+i.height:''].filter(Boolean).map(t=>'<span class="tag">'+esc(t)+'</span>').join('');
- const sub=[i.manufacturer,i.android&&'Android '+i.android,i.sdk&&'API '+i.sdk].filter(Boolean).join(' · ');
- const acts=on?'<button class="small" data-card="use">Use</button><button class="small secondary" data-card="controls">Controls</button><button class="small secondary" data-card="logs">Logs</button>'
-  :(d.state==='remembered'||d.kind==='Wi-Fi')?'<button class="small" data-card="reconnect">Reconnect</button>':'';
- return '<article class="dev '+esc(d.state)+(selected.has(d.serial)?' selected':'')+'" data-serial="'+esc(d.serial)+'"><div class="screen"'+(on?' data-card="use" title="Open live view"':'')+'>'+screen
-  +'<span class="status s-'+esc(st)+'"><i></i>'+(st==='focus'?'In use':label[d.state]||esc(d.state))+'</span>'
-  +(on?'<input type="checkbox" class="pick" data-select aria-label="Select '+esc(d.model)+'"'+(selected.has(d.serial)?' checked':'')+'>':'')+'</div>'
-  +'<div class="meta"><h3 title="'+esc(d.model)+'">'+esc(d.model)+'</h3>'+(sub?'<div class="sub">'+esc(sub)+'</div>':'')+'<div class="tags">'+tags+'</div><div class="serial" title="'+esc(d.serial)+'">'+esc(d.serial)+'</div><div class="cardacts">'+acts+'</div></div></article>';}
-function render(){const shown=devices.filter(matches);
- const c={device:0,attention:0,remembered:0};for(const d of devices)c[d.state==='device'?'device':d.state==='remembered'?'remembered':'attention']++;
- $('summary').textContent=devices.length?c.device+' available · '+c.attention+' need attention · '+c.remembered+' disconnected':'No devices yet.';
- $('farm').innerHTML=shown.map(card).join('')||'<div class="empty">'+(devices.length?'No devices match the current filter.':'No devices yet. <button class=\"small\" data-top=\"add\">Add device</button>')+'</div>';
- $('selbar').hidden=!selected.size;$('selcount').textContent=selected.size+' selected';}
-const serialOf=el=>el.closest('[data-serial]')?.dataset.serial;
-const device=s=>devices.find(d=>d.serial===s);
-function notice(text,error){const n=$('notice');n.textContent=text;n.className=error?'error':'';n.hidden=false;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>n.hidden=true,error?10000:4000);}
-function openView(s){const d=device(s);if(!d)return;focus=s;const i=d.info||{};$('vtitle').textContent=d.model;$('vsub').textContent=[i.manufacturer,i.android&&'Android '+i.android,d.kind,d.serial].filter(Boolean).join(' · ');
- const img=$('liveimg');if(frames[s]){img.src=frames[s];img.hidden=false;$('livemsg').hidden=true;}else{img.hidden=true;$('livemsg').hidden=false;$('livemsg').textContent='Connecting…';}
- canvas.hidden=true;resetDecoder();decodeErrors=0;$('overlay').hidden=false;render();
- videoSupported().then(ok=>{if(focus!==s)return;$('livemode').textContent=ok?'Live video.':'Screenshot mode (this VS Code cannot decode H.264).';api.postMessage({action:'focus',serial:s,stream:ok});});}
-function closeView(){if(!focus)return;focus=null;resetDecoder();$('overlay').hidden=true;api.postMessage({action:'focus',serial:null});render();}
-document.addEventListener('click',e=>{const t=e.target;
- if(t.matches('[data-select]')){const s=serialOf(t);t.checked?selected.add(s):selected.delete(s);render();return;}
- const b=t.closest('[data-card],[data-top],[data-bulk],[data-key],[data-view],[data-tab],[data-add],[data-recent]');if(!b)return;
- if(b.dataset.top==='add'){openAdd();return;}
- if(b.dataset.tab){showTab(b.dataset.tab);return;}
- if(b.dataset.add==='close'){closeAdd();return;}
- if(b.dataset.add==='qr-new'){startQr();return;}
- if(b.dataset.add==='prov-stop'){api.postMessage({action:'provision-stop'});return;}
- if(b.dataset.recent){$('addr').value=b.dataset.recent;connectAddr();return;}
- if(b.dataset.card){const s=serialOf(b);if(b.dataset.card==='use')openView(s);else if(b.dataset.card==='reconnect')api.postMessage({action:'reconnect',serial:s});else api.postMessage({action:'bulk',command:b.dataset.card,serials:[s]});}
- else if(b.dataset.top==='refresh')api.postMessage({action:'refresh'});
- else if(b.dataset.top==='select-all'){devices.filter(d=>d.state==='device'&&matches(d)).forEach(d=>selected.add(d.serial));render();}
- else if(b.dataset.top==='clear'){selected.clear();render();}
- else if(b.dataset.bulk)api.postMessage({action:'bulk',command:b.dataset.bulk,serials:[...selected]});
- else if(b.dataset.key)api.postMessage({action:'key',serial:focus,key:b.dataset.key});
- else if(b.dataset.view==='close')closeView();
- else if(b.dataset.view)api.postMessage({action:'bulk',command:b.dataset.view,serials:[focus]});});
-$('overlay').addEventListener('click',e=>{if(e.target===$('overlay'))closeView();});
-document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('add').hidden)closeAdd();else closeView();});
-let tab='qr';
-function setStatus(t,state,text){const el=$('st-'+t);if(el){el.className='st '+state;el.textContent=text;}}
-function startQr(){$('qrimg').hidden=true;setStatus('qr','working','Generating code…');api.postMessage({action:'qr-start'});}
-function showTab(t){if(tab==='qr'&&t!=='qr')api.postMessage({action:'qr-stop'});tab=t;
- document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===t)));
- document.querySelectorAll('[data-pane]').forEach(p=>p.hidden=p.dataset.pane!==t);
- if(t==='qr')startQr();if(t==='managed'){api.postMessage({action:'provision-addresses'});$('provssid').focus();}if(t==='address'){api.postMessage({action:'addresses'});$('addr').focus();}if(t==='code')$('pairaddr').focus();}
-function openAdd(){$('add').hidden=false;showTab('qr');}
-function closeAdd(){$('add').hidden=true;api.postMessage({action:'qr-stop'});}
-function connectAddr(){const a=$('addr').value.trim();if(a){setStatus('address','working','Connecting…');api.postMessage({action:'connect-address',address:a});}}
-$('add').addEventListener('click',e=>{if(e.target===$('add'))closeAdd();});
-$('addrform').addEventListener('submit',e=>{e.preventDefault();connectAddr();});
-$('codeform').addEventListener('submit',e=>{e.preventDefault();const code=$('paircode').value.trim();if(!/^\\d{6}$/.test(code)){setStatus('code','error','Enter the 6-digit pairing code.');return;}setStatus('code','working','Pairing…');api.postMessage({action:'pair-code',address:$('pairaddr').value.trim(),code});});
-$('provform').addEventListener('submit',e=>{e.preventDefault();$('provimg').hidden=true;setStatus('managed','working','Starting…');api.postMessage({action:'provision-start',address:$('provaddr').value,ssid:$('provssid').value,password:$('provpass').value});});
-$('search').addEventListener('input',render);$('status').addEventListener('change',render);
-$('live').addEventListener('change',e=>{api.postMessage({action:'live',on:e.target.checked});render();});
-$('textform').addEventListener('submit',e=>{e.preventDefault();const v=$('text').value;if(v&&focus){api.postMessage({action:'text',serial:focus,text:v});$('text').value='';}});
-let down=null;const img=$('liveimg'),canvas=$('livecanvas'),ctx=canvas.getContext('2d');
-// --- live H.264 video (WebCodecs); screenshots are the fallback
-let decoder=null,decoderCodec='',waitKey=true,timestamp=0,decodeErrors=0,supported;
-function videoSupported(){if(supported!==undefined)return Promise.resolve(supported);if(typeof VideoDecoder!=='function')return Promise.resolve(supported=false);
- return VideoDecoder.isConfigSupported({codec:'avc1.42e01f',optimizeForLatency:true}).then(r=>supported=!!r.supported,()=>supported=false);}
-function resetDecoder(){try{if(decoder&&decoder.state!=='closed')decoder.close();}catch{}decoder=null;decoderCodec='';waitKey=true;}
-function drawFrame(frame){if(!focus){frame.close();return;}
- if(canvas.width!==frame.displayWidth||canvas.height!==frame.displayHeight){canvas.width=frame.displayWidth;canvas.height=frame.displayHeight;}
- ctx.drawImage(frame,0,0);frame.close();if(canvas.hidden){canvas.hidden=false;img.hidden=true;$('livemsg').hidden=true;}}
-function decoderFailed(e){resetDecoder();if(++decodeErrors>=3){api.postMessage({action:'video-unsupported'});$('livemode').textContent='Screenshot mode (video decoding failed: '+(e&&e.message||e)+').';canvas.hidden=true;}else api.postMessage({action:'video-error'});}
-function onVideo(m){if(m.serial!==focus||decodeErrors>=3)return;
- if(m.key&&m.codec&&(!decoder||decoderCodec!==m.codec)){resetDecoder();
-  try{decoder=new VideoDecoder({output:drawFrame,error:decoderFailed});decoder.configure({codec:m.codec,optimizeForLatency:true});decoderCodec=m.codec;}catch(e){decoderFailed(e);return;}}
- if(!decoder||(waitKey&&!m.key))return;waitKey=false;
- try{decoder.decode(new EncodedVideoChunk({type:m.key?'key':'delta',timestamp:(timestamp++)*33333,data:bytes(m.data)}));}catch(e){decoderFailed(e);}}
-function bytes(d){return d instanceof Uint8Array?d:d instanceof ArrayBuffer?new Uint8Array(d):ArrayBuffer.isView(d)?new Uint8Array(d.buffer,d.byteOffset,d.byteLength):new Uint8Array(Array.isArray(d)?d:Object.values(d||{}));}
-// --- pointer input on whichever surface is showing
-function surface(){if(!canvas.hidden&&canvas.width){const i=(device(focus)||{}).info||{};let w=i.width||canvas.width,h=i.height||canvas.height;
-  if((canvas.width>canvas.height)!==(w>h))[w,h]=[h,w];return{el:canvas,w,h};}
- return img.naturalWidth?{el:img,w:img.naturalWidth,h:img.naturalHeight}:null;}
-const point=(e,s)=>{const r=s.el.getBoundingClientRect();return{x:Math.round((e.clientX-r.left)*s.w/r.width),y:Math.round((e.clientY-r.top)*s.h/r.height),cx:e.clientX,cy:e.clientY};};
-for(const el of [img,canvas]){
- el.style.touchAction='none';el.style.cursor='crosshair';
- el.addEventListener('pointerdown',e=>{const s=surface();if(!s||s.el!==el)return;el.setPointerCapture(e.pointerId);down={...point(e,s),t:performance.now(),s};e.preventDefault();});
- el.addEventListener('pointerup',e=>{if(!down||!focus)return;const s=down.s,p=point(e,s),clamp=(v,m)=>Math.max(0,Math.min(m-1,v));
-  const x=clamp(down.x,s.w),y=clamp(down.y,s.h),x2=clamp(p.x,s.w),y2=clamp(p.y,s.h);
-  if(Math.hypot(p.cx-down.cx,p.cy-down.cy)<8)api.postMessage({action:'gesture',serial:focus,type:'tap',x,y});
-  else api.postMessage({action:'gesture',serial:focus,type:'swipe',x,y,x2,y2,duration:performance.now()-down.t});down=null;});
- el.addEventListener('pointercancel',()=>{down=null;});}
-window.addEventListener('message',e=>{const m=e.data;
- if(m.kind==='devices'){$('error').textContent=m.error?'ADB unavailable: '+m.error:'';const json=JSON.stringify(m.devices);
-  devices=m.devices;for(const s of [...selected])if(!devices.some(d=>d.serial===s&&d.state==='device'))selected.delete(s);if(json!==last){last=json;render();}}
- else if(m.kind==='frame'){frames[m.serial]=m.src;delete frameErrors[m.serial];
-  const el=document.querySelector('.dev[data-serial="'+CSS.escape(m.serial)+'"] .screen');
-  if(el){const i=el.querySelector('img');if(i)i.src=m.src;else{const msg=el.querySelector('.msg');if(msg)msg.outerHTML='<img data-serial="'+esc(m.serial)+'" src="'+m.src+'" alt="Screen">';}}
-  if(m.serial===focus&&canvas.hidden){img.src=m.src;img.hidden=false;$('livemsg').hidden=true;}}
- else if(m.kind==='video')onVideo(m);
- else if(m.kind==='video-reset'){if(m.serial===focus)waitKey=true;}
- else if(m.kind==='video-failed'){if(m.serial===focus){resetDecoder();canvas.hidden=true;$('livemode').textContent='Screenshot mode (video stream unavailable).';notice('Live video stopped: '+m.text,true);}}
- else if(m.kind==='frame-error'){frameErrors[m.serial]=m.text;if(m.serial===focus&&!frames[m.serial]){$('livemsg').textContent=m.text;}if(!frames[m.serial])render();}
- else if(m.kind==='focus-lost'){notice('The device disconnected.',true);closeView();}
- else if(m.kind==='notice')notice(m.text,m.error);
- else if(m.kind==='qr'){$('qrimg').src=m.src;$('qrimg').hidden=false;}
- else if(m.kind==='provision-qr'){$('provimg').hidden=!m.src;if(m.src)$('provimg').src=m.src;$('provstop').hidden=!m.src;}
- else if(m.kind==='provision-addresses'){const sel=$('provaddr'),prev=sel.value;sel.innerHTML=m.list.map(a=>'<option value="'+esc(a.address)+'">'+esc(a.address+' ('+a.name+')')+'</option>').join('');if(m.list.some(a=>a.address===prev))sel.value=prev;if(!m.list.length)setStatus('managed','error','No local network address found. Connect this computer to the same Wi-Fi as the phone.');$('provstop').hidden=!m.serving;}
- else if(m.kind==='add-status'){setStatus(m.tab,m.state,m.text);if(m.state==='ok'&&m.tab==='qr')$('qrimg').hidden=true;}
- else if(m.kind==='addresses')$('recent').innerHTML=m.list.length?'<small class="muted" style="width:100%">Recent</small>'+m.list.map(a=>'<button class="secondary small" data-recent="'+esc(a)+'">'+esc(a)+'</button>').join(''):'';});
-api.postMessage({action:'ready'});
-`;

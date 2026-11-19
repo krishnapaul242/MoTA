@@ -74,6 +74,7 @@ final class Bridge {
                 case "cancelVideo":if(MainActivity.visible!=null&&(owner.isEmpty()||owner.equals(MainActivity.visible.remoteOwner)))MainActivity.visible.cancelRemoteVideo();if(owner.isEmpty()||(s.session!=null&&owner.equals(s.session.data.optString("captureOwner"))))s.stopEverything("Video request cancelled from MoTA");break;
                 case "stop":case "cancel":s.stopEverything("Stopped from MoTA");break;
                 case "shot":s.screenshot(params.optInt("actionIndex",-1),false);break;
+                case "input":s.liveInput(params);return new JSONObject().put("ok",true);
                 case "replay":
                     if(s.recording||s.playing||s.busy||s.shotsPending>0||CaptureService.active)throw new IOException("Device already busy");
                     JSONObject data=params.getJSONObject("session");validate(data,s);
@@ -94,7 +95,7 @@ final class Bridge {
         }}
     }
     JSONObject status(RecorderService s)throws Exception{
-        JSONObject r=new JSONObject().put("protocol",1).put("version","0.3.0").put("ready",s!=null)
+        JSONObject r=new JSONObject().put("protocol",1).put("version","0.4.0").put("ready",s!=null)
             .put("deviceOwner",context.getSystemService(android.app.admin.DevicePolicyManager.class).isDeviceOwnerApp(context.getPackageName())).put("videoActive",CaptureService.active).put("videoPaused",CaptureService.live!=null&&CaptureService.live.videoPaused);
         if(s!=null){r.put("overlayExpanded",s.overlayExpanded).put("recording",s.recording).put("playing",s.playing).put("paused",s.paused).put("busy",s.busy||s.shotsPending>0).put("message",s.message)
             .put("width",s.width()).put("height",s.height()).put("rotation",s.rotation()).put("replayIndex",s.replayIndex).put("replayTotal",s.replayTotal);

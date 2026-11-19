@@ -283,6 +283,49 @@ public class RecorderService extends AccessibilityService {
         d.getWindow().setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
         d.setOnDismissListener(x->{focused.recycle();main.postDelayed(this::showTouch,300);});d.show();
     }
+    /**
+     * Live control from the desktop, used where `adb shell input` is blocked (Xiaomi without the USB security setting).
+     * Not recorded. Main thread only.
+     */
+    void liveInput(JSONObject p) throws Exception {
+        if(playing||(recording&&!passiveRecording))throw new IOException("Stop the recording or replay on the device first");
+        String type=p.getString("type");
+        switch(type){
+            case "tap": case "swipe":{
+                int w=width(),h=height();
+                Path path=new Path();path.moveTo(coord(p,"x",w),coord(p,"y",h));long ms=60;
+                if(type.equals("swipe")){path.lineTo(coord(p,"x2",w),coord(p,"y2",h));ms=Math.max(50,Math.min(5000,p.optLong("duration",300)));}
+                GestureDescription g=new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,ms)).build();
+                if(!dispatchGesture(g,null,null))throw new IOException("Android rejected the gesture");
+                break;
+            }
+            case "key":{
+                String key=p.getString("key");int global=key.equals("back")?GLOBAL_ACTION_BACK:key.equals("home")?GLOBAL_ACTION_HOME:key.equals("recents")?GLOBAL_ACTION_RECENTS:key.equals("sleep")?GLOBAL_ACTION_LOCK_SCREEN:-1;
+                if(global>=0){if(!performGlobalAction(global))throw new IOException("Android refused "+key);}
+                else if(key.equals("volumeUp")||key.equals("volumeDown"))getSystemService(AudioManager.class).adjustSuggestedStreamVolume(key.equals("volumeUp")?AudioManager.ADJUST_RAISE:AudioManager.ADJUST_LOWER,AudioManager.USE_DEFAULT_STREAM_TYPE,AudioManager.FLAG_SHOW_UI);
+                else if(key.equals("wake")){
+                    // Accessibility cannot wake the screen; a short wake lock that turns it on can.
+                    @SuppressWarnings("deprecation") PowerManager.WakeLock lock=getSystemService(PowerManager.class).newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK|PowerManager.ACQUIRE_CAUSES_WAKEUP,"mota:wake");
+                    lock.acquire(3000);
+                }
+                else throw new IOException("Unsupported key: "+key);
+                break;
+            }
+            case "text":{
+                String text=p.getString("text");if(text.isEmpty()||text.length()>4096)throw new IOException("Enter up to 4096 characters");
+                AccessibilityNodeInfo root=getRootInActiveWindow();AccessibilityNodeInfo node=root==null?null:root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                if(node==null||!node.isEditable())throw new IOException("Tap a text field on the device first");
+                // ACTION_SET_TEXT replaces the field, so append to what is already typed (not to the hint).
+                CharSequence current=node.getText();boolean hint=node.isShowingHintText();
+                Bundle b=new Bundle();b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,(current==null||hint?"":current.toString())+text);
+                boolean ok=node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,b);node.recycle();
+                if(!ok)throw new IOException("The app rejected text input");
+                break;
+            }
+            default:throw new IOException("Unknown input type");
+        }
+    }
+    static float coord(JSONObject p,String key,int size)throws Exception{double v=p.getDouble(key);if(!(v>=0&&v<size))throw new IOException("Coordinates are outside the screen");return (float)v;}
     void screenshot(int index,boolean manual) {
         final SessionStore target=session;
         if(target==null){toast("Record a session first");return;}

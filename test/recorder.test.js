@@ -57,14 +57,14 @@ test('replay accepts reconnecting addresses but rejects other identities, incomp
 });
 test('bridge bootstrap rejects missing credentials and incompatible versions',()=>{
  assert.throws(()=>parseBootstrap('SecurityException'),/bridge unavailable/);
- const payload={protocol:1,version:'0.3.0',socket:'mota.recorder',token:'x'.repeat(44),ready:true};
+ const payload={protocol:1,version:'0.4.0',socket:'mota.recorder',token:'x'.repeat(44),ready:true};
  assert.equal(parseBootstrap('Row: 0 bridge='+Buffer.from(JSON.stringify(payload)).toString('base64')).ready,true);
  assert.throws(()=>parseBootstrap('bridge='+Buffer.from(JSON.stringify({...payload,version:'9'})).toString('base64')),/mismatch/);
 });
 test('helper client correlates replies and removes only its allocated forward',async()=>{
- const requests=[],calls=[];const server=net.createServer(socket=>{let buffer='';socket.on('data',chunk=>{buffer+=chunk;if(buffer.includes('\n')){const request=JSON.parse(buffer);requests.push(request);socket.end(JSON.stringify({id:request.id,result:{protocol:1,version:'0.3.0',ready:true}})+'\n');}});});
+ const requests=[],calls=[];const server=net.createServer(socket=>{let buffer='';socket.on('data',chunk=>{buffer+=chunk;if(buffer.includes('\n')){const request=JSON.parse(buffer);requests.push(request);socket.end(JSON.stringify({id:request.id,result:{protocol:1,version:'0.4.0',ready:true}})+'\n');}});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
- const bootstrap={protocol:1,version:'0.3.0',socket:'mota.recorder',token:'x'.repeat(44),ready:true};
+ const bootstrap={protocol:1,version:'0.4.0',socket:'mota.recorder',token:'x'.repeat(44),ready:true};
  const adb={shell:async()=> 'Row: 0 bridge='+Buffer.from(JSON.stringify(bootstrap)).toString('base64'),run:async args=>{calls.push(args);return String(port);}};
  const client=new HelperClient(adb,'phone');try{assert.equal((await client.connect()).ready,true);await client.request('stop');assert.deepEqual(requests.map(r=>r.op),['status','stop']);assert.ok(requests.every(r=>r.token===bootstrap.token));}finally{await client.dispose();await new Promise(r=>server.close(r));}
  assert.deepEqual(calls.at(-1),['-s','phone','forward','--remove',`tcp:${port}`]);assert.ok(calls.every(c=>!c.includes(bootstrap.token)));
@@ -96,7 +96,7 @@ test('raw recording drains checkpoint writes before stopping and marks empty or 
  for(const interrupted of [false,true,'empty']){
  const store=new RecordingStore(join(root,String(interrupted))),staged=await store.create({...meta,complete:false});
  const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.kill=()=>{child.emit('close',0);return true;};
- const calls=[];const client={serial:'phone',request:async(op)=>{calls.push(op);return {protocol:1,version:'0.3.0',ready:true,recording:op!=='stop',session:'test',uptimeStartMs:1000,...display};}};
+ const calls=[];const client={serial:'phone',request:async(op)=>{calls.push(op);return {protocol:1,version:'0.4.0',ready:true,recording:op!=='stop',session:'test',uptimeStartMs:1000,...display};}};
  const raw=new RawRecording({stream:()=>child},client,display,touch,staged.dir,staged.meta,()=>{});await raw.start();
  const line=(at,code,value)=>child.stdout.write(`[ ${at}] /dev/input/event2: ${code.startsWith('SYN')?'EV_SYN':'EV_ABS'} ${code} ${value}\n`);
  if(interrupted!=='empty'){line('1.100000','ABS_MT_TRACKING_ID','00000001');line('1.100000','ABS_MT_POSITION_X','000001f4');line('1.100000','ABS_MT_POSITION_Y','000003e8');line('1.100000','SYN_REPORT','00000000');}

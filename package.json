@@ -2,7 +2,7 @@
   "name": "mota-android",
   "displayName": "MoTA Android",
   "description": "Android device controls, screenshots, video capture, recording and replay, APK installs and diagnostics.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "mota-local",
   "engines": {
     "vscode": "^1.95.0"
@@ -26,8 +26,10 @@
     "package": "vsce package --allow-missing-repository"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.328",
     "qrcode": "^1.5.4",
-    "yauzl": "^3.4.0"
+    "yauzl": "^3.4.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -116,6 +118,12 @@
         "title": "MoTA: Device Controls",
         "shortTitle": "Device controls",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "mota.tests",
+        "title": "MoTA: Run Maestro Tests",
+        "shortTitle": "Run tests",
+        "icon": "$(beaker)"
       }
     ],
     "views": {
@@ -176,6 +184,11 @@
           "command": "mota.device",
           "when": "view == mota.devices",
           "group": "navigation@0"
+        },
+        {
+          "command": "mota.tests",
+          "when": "view == mota.devices",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -240,6 +253,44 @@
           "type": "string",
           "default": "",
           "description": "Absolute recording directory. Empty uses .mota/recordings in the first workspace folder, or extension storage without a workspace."
+        },
+        "mota.maestroPath": {
+          "type": "string",
+          "default": "",
+          "description": "Maestro CLI path. Empty uses ~/.maestro/bin/maestro when present, otherwise maestro on PATH."
+        },
+        "mota.maestroFlowsFolder": {
+          "type": "string",
+          "default": ".maestro",
+          "description": "Folder with your Maestro flows, relative to the first workspace folder or absolute."
+        },
+        "mota.ai.claudePath": {
+          "type": "string",
+          "default": "",
+          "description": "Claude Code CLI that MoTA's assistant runs on, using its existing login. Empty finds claude in ~/.local/bin, ~/.claude/local or on PATH."
+        },
+        "mota.ai.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model for MoTA's assistant. Empty uses Claude Code's default model."
+        },
+        "mota.ai.effort": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "default": "medium",
+          "description": "How hard Claude thinks. Higher is slower and uses more tokens."
+        },
+        "mota.ai.screenshotWidth": {
+          "type": "number",
+          "default": 960,
+          "minimum": 480,
+          "maximum": 1600,
+          "description": "Longest side, in pixels, of screenshots sent to Claude. Smaller uses fewer tokens."
         }
       }
     }

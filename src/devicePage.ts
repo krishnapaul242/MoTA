@@ -3,13 +3,18 @@ import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { Adb, Device, escapeHtml as html } from './adb';
-import { page } from './ui';
+import { Adb, Device } from './adb';
+import { ChildProcess } from 'node:child_process';
+import { controlsHtml } from './webview/controlsView';
+import { aiHost, AiLink, aiPoster, isAiMessage } from './webview/aiLink';
+import { ScreenMirror, streamSize } from './h264';
+import { connectionKind, FARM_INFO_SCRIPT, gestureArgs, parseFarmInfo, FarmInfo } from './deviceFarm';
 import { HelperClient, HelperStatus, HELPER_PACKAGE } from './helperClient';
 import { downloadSession } from './recorder';
 import { captureScreenshot, copyPngToClipboard, deepLinkArgs, deviceAdbArgs, shellLiteral, validatePng } from './deviceControl';
 import { validPackage } from './apk';
 import { launchApp } from './deviceActions';
+import { gestureParams, InputRouter } from './helperInput';
 
 export const devicePresets: Record<string,{label:string;args:string[]}> = {
   home:{label:'Home',args:['input','keyevent','KEYCODE_HOME']},back:{label:'Back',args:['input','keyevent','KEYCODE_BACK']},recents:{label:'Recents',args:['input','keyevent','KEYCODE_APP_SWITCH']},
@@ -17,6 +22,7 @@ export const devicePresets: Record<string,{label:string;args:string[]}> = {
   settings:{label:'Settings',args:['am','start','-a','android.settings.SETTINGS']},wifi:{label:'Wi-Fi settings',args:['am','start','-a','android.settings.WIFI_SETTINGS']},bluetooth:{label:'Bluetooth settings',args:['am','start','-a','android.settings.BLUETOOTH_SETTINGS']},
   packages:{label:'Installed apps',args:['pm','list','packages','-3']},properties:{label:'Device properties',args:['getprop']},battery:{label:'Battery',args:['dumpsys','battery']},memory:{label:'Memory',args:['dumpsys','meminfo']},activities:{label:'Activities',args:['dumpsys','activity','activities']},display:{label:'Display',args:['wm','size']},
 };
+const INPUT_KEYS=['home','back','recents','wake','sleep','volumeUp','volumeDown'];
 export function registerDevicePage(vscode:typeof VSCode,context:VSCode.ExtensionContext,adb:Adb,choose:(item?:any)=>Promise<Device[]>){
   const windows=new Map<string,ControlPage>();
   context.subscriptions.push(vscode.commands.registerCommand('mota.device',async(item?:any)=>{
@@ -37,17 +43,27 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
     private operation:Promise<void>=Promise.resolve();private operationDone?:()=>void;
     private message='Ready. Capture a screenshot or choose a device action.';private error='';private output='';
     private timer:ReturnType<typeof setInterval>;
+    private input=new InputRouter(adb);
+    private ai:AiLink;
+    private liveOn=false;private mirror?:ScreenMirror;private shotBusy=false;private lastShot=0;private liveTimer?:ReturnType<typeof setInterval>;
+    private info?:FarmInfo;private logs?:ChildProcess;private logLines:string[]=[];private logFlush?:ReturnType<typeof setTimeout>;
     constructor(readonly device:Device){
       this.root=join(context.globalStorageUri.fsPath,'device-captures',Buffer.from(device.serial).toString('hex'));
-      this.panel=vscode.window.createWebviewPanel('mota.device',`${device.model} · Device controls`,vscode.ViewColumn.One,{enableScripts:true,retainContextWhenHidden:true,localResourceRoots:[vscode.Uri.file(this.root)]});
-      this.panel.webview.html=this.html();
+      this.panel=vscode.window.createWebviewPanel('mota.device',`${device.model} · Device controls`,vscode.ViewColumn.One,{enableScripts:true,retainContextWhenHidden:true,localResourceRoots:[vscode.Uri.file(this.root),...(vscode.workspace?.workspaceFolders??[]).map(f=>f.uri)]});
+      this.panel.webview.html=controlsHtml(device,this.panel.webview.cspSource);
+      this.ai=aiHost(context,adb).connect(aiPoster(vscode,this.panel,()=>this.closing));
       this.panel.webview.onDidReceiveMessage(m=>{void this.action(m);});this.timer=setInterval(()=>{void this.pollCapture();},1000);
+      this.liveTimer=setInterval(()=>{void this.liveTick();},700);
     }
     private async connect(){if(!this.client){const c=new HelperClient(adb,this.device.serial);try{const s=await c.connect();if(!s.ready)throw new Error('Enable MoTA Recorder accessibility on the device. Use Set up helper if needed.');if(this.closing)throw new Error('Device page closed.');this.client=c;}catch(e){await c.dispose();throw e;}}return this.client;}
     private state(){if(!this.closing)void this.panel.webview.postMessage({kind:'state',message:this.message,error:this.error,output:this.output,working:this.working,capture:this.capture,hasImage:!!this.lastImage,hasVideo:!!this.lastVideo});}
     private fail(operation:string,e:unknown){const text=e instanceof Error?e.message:String(e);this.message=text;this.error=`MoTA device control error\nDevice: ${this.device.model} (${this.device.serial})\nOperation: ${operation}\n${text}`;this.state();}
+    private post(m:unknown){if(!this.closing)void this.panel.webview.postMessage(m);}
     private async action(m:any){
-      if(!m||typeof m.action!=='string'||this.closing)return;
+      if(this.closing)return;
+      if(isAiMessage(m)){await this.ai.handle(m);return;}
+      if(!m||typeof m.action!=='string')return;
+      try{if(await this.quick(m))return;}catch(e){this.fail(m.action,e);return;}
       if(m.action==='ready'){this.state();return;}
       if(m.action==='client-error'){this.fail('media preview / clipboard',String(m.message||'Preview failed').slice(0,4000));return;}
       if(m.action==='copied'){this.message='Image copied to clipboard.';this.state();return;}
@@ -60,7 +76,7 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
           case 'screenshot':{
             this.message='Capturing screenshot…';this.state();const image=await captureScreenshot(adb,this.device.serial);await fs.mkdir(this.root,{recursive:true,mode:0o700});
             this.lastImage=join(this.root,`screenshot-${randomUUID()}.png`);await fs.writeFile(this.lastImage,image,{mode:0o600});
-            if(!this.closing)await this.panel.webview.postMessage({kind:'screenshot',src:'data:image/png;base64,'+image.toString('base64')});this.message='Screenshot captured.';break;
+            if(!this.closing)await this.panel.webview.postMessage({kind:'screenshot',src:'data:image/png;base64,'+image.toString('base64')});this.message='Screenshot captured.';void this.sendCaptures(this.lastImage.slice(this.root.length+1));break;
           }
           case 'copy-image':case 'copy-frame':case 'save-frame':{
             let path=this.lastImage;
@@ -85,21 +101,23 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
           case 'stats':await vscode.commands.executeCommand('mota.stats',{device:this.device});break;
           case 'logs':await vscode.commands.executeCommand('mota.logcat',{device:this.device});break;
           case 'awake':await vscode.commands.executeCommand('mota.awake',{device:this.device});break;
-          case 'preset':{const p=devicePresets[m.preset];if(!p)throw new Error('Unknown device action.');this.output=await shellLiteral(adb,this.device.serial,p.args);this.message=p.label+' completed.';break;}
+          case 'preset':{const p=devicePresets[m.preset];if(!p)throw new Error('Unknown device action.');this.output=INPUT_KEYS.includes(m.preset)?await this.input.send(this.device.serial,p.args,{type:'key',key:m.preset}):await shellLiteral(adb,this.device.serial,p.args);this.message=p.label+' completed.';break;}
           case 'deeplink':this.output=await shellLiteral(adb,this.device.serial,deepLinkArgs(String(m.uri||''),String(m.package||'')));if(/Error:|Exception|Permission Denial/i.test(this.output))throw new Error(this.output);this.message='Deep link sent to the device.';break;
           case 'app':{
             const pkg=String(m.package||'');if(!validPackage(pkg))throw new Error('Enter a valid app package ID.');
             if(m.operation==='launch'){this.output=await launchApp(adb,this.device.serial,pkg);this.message='App launched.';break;}
+            if(m.operation==='restart'){await shellLiteral(adb,this.device.serial,['am','force-stop',pkg]);this.output=await launchApp(adb,this.device.serial,pkg);this.message=pkg+' restarted.';break;}
+            if(m.operation==='settings'){this.output=await shellLiteral(adb,this.device.serial,['am','start','-a','android.settings.APPLICATION_DETAILS_SETTINGS','-d','package:'+pkg]);this.message='Opened app info on the device.';break;}
             if(!['force-stop','clear','uninstall'].includes(m.operation))throw new Error('Unknown app operation.');
             if(['clear','uninstall'].includes(m.operation)){const confirm=await vscode.window.showWarningMessage(`${m.operation==='clear'?'Delete all app data for':'Uninstall'} ${pkg} on ${this.device.model}?`,{modal:true},'Continue');if(confirm!=='Continue'||this.closing)break;}
-            this.output=m.operation==='uninstall'?await adb.run(['-s',this.device.serial,'uninstall',pkg],120000):await shellLiteral(adb,this.device.serial,m.operation==='clear'?['pm','clear',pkg]:['am','force-stop',pkg]);this.message='App action completed.';break;
+            this.output=m.operation==='uninstall'?await adb.run(['-s',this.device.serial,'uninstall',pkg],120000):await shellLiteral(adb,this.device.serial,m.operation==='clear'?['pm','clear',pkg]:['am','force-stop',pkg]);this.message={uninstall:pkg+' uninstalled.',clear:'App data cleared for '+pkg+'.','force-stop':pkg+' stopped.'}[m.operation as string]||'App action completed.';if(m.operation==='uninstall')void this.sendPackages();void this.sendAppInfo(pkg);break;
           }
           case 'tap':case 'swipe':{
             const values=(m.action==='tap'?[m.x,m.y]:[m.x,m.y,m.x2,m.y2]).map(Number);if(values.some(v=>!Number.isInteger(v)||v<0||v>20000))throw new Error('Enter valid screen coordinates.');
             const duration=Number(m.duration??300);if(!Number.isInteger(duration)||duration<1||duration>60000)throw new Error('Gesture duration must be 1–60000 ms.');
-            this.output=await shellLiteral(adb,this.device.serial,['input',m.action,...values.map(String),...(m.action==='swipe'?[String(duration)]:[])]);this.message='Input sent.';break;
+            const args=['input',m.action,...values.map(String),...(m.action==='swipe'?[String(duration)]:[])];this.output=await this.input.send(this.device.serial,args,gestureParams(args));this.message='Input sent.';break;
           }
-          case 'text':if(typeof m.text!=='string'||m.text.length>4096)throw new Error('Text exceeds 4096 characters.');this.output=await shellLiteral(adb,this.device.serial,['input','text',m.text.replace(/ /g,'%s')]);this.message='Text sent. ADB text input supports a limited character set.';break;
+          case 'text':if(typeof m.text!=='string'||m.text.length>4096)throw new Error('Text exceeds 4096 characters.');this.output=await this.input.send(this.device.serial,['input','text',m.text.replace(/ /g,'%s')],{type:'text',text:m.text});this.message=this.input.usesHelper(this.device.serial)?'Text sent through the helper.':'Text sent. ADB text input supports a limited character set.';break;
           case 'command':{
             if(typeof m.command!=='string'||!m.command.trim()||m.command.length>16384||m.command.includes('\0'))throw new Error('Enter a command under 16 KB.');
             this.message='Running on '+this.device.model+'…';this.state();
@@ -116,6 +134,92 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
         }
       }catch(e){this.fail(m.action,e);}finally{this.working=false;this.operationDone?.();this.operationDone=undefined;this.state();}
     }
+    /** Reads and live-screen actions: no busy lock, so input stays responsive during long operations. */
+    private async quick(m:any):Promise<boolean>{
+      const serial=this.device.serial;
+      switch(m.action){
+        case 'farm':await vscode.commands.executeCommand('mota.farm');return true;
+        case 'live-start':this.liveOn=true;this.stopMirror();if(m.stream)this.startMirror();this.lastShot=0;return true;
+        case 'video-error':this.mirror?.restart();return true;
+        case 'video-unsupported':this.stopMirror();this.lastShot=0;return true;
+        case 'gesture':{const args=gestureArgs(m);await this.input.send(serial,args,gestureParams(args));this.lastShot=0;return true;}
+        case 'key':{if(!INPUT_KEYS.includes(m.key))throw new Error('Unknown key.');await this.input.send(serial,devicePresets[m.key].args,{type:'key',key:m.key});this.lastShot=0;return true;}
+        case 'text':{if(typeof m.text!=='string'||!m.text||m.text.length>4096)throw new Error('Enter up to 4096 characters.');await this.input.send(serial,['input','text',m.text.replace(/ /g,'%s')],{type:'text',text:m.text});this.lastShot=0;return true;}
+        case 'info':{this.info=parseFarmInfo(await adb.shell(serial,[FARM_INFO_SCRIPT]));this.post({kind:'info',info:this.info,connection:connectionKind(serial)});return true;}
+        case 'packages':await this.sendPackages();return true;
+        case 'app-info':if(validPackage(String(m.package||'')))await this.sendAppInfo(m.package);return true;
+        case 'captures':await this.sendCaptures();return true;
+        case 'select-capture':{const path=this.capturePath(m.name);if(!path)return true;if(path.endsWith('.mp4'))this.lastVideo=path;else this.lastImage=path;this.state();return true;}
+        case 'diag':this.post({kind:'diag',diag:await this.diagnostics()});return true;
+        case 'ls':{const path=String(m.path||'');if(!path.startsWith('/')||/[\x00\r\n]/.test(path)||path.length>4096)throw new Error('Enter an absolute folder path.');
+          try{this.post({kind:'files',path,entries:parseLs(await shellLiteral(adb,serial,['ls','-la',path.replace(/\/?$/,'/')]))});}catch(e){this.post({kind:'files',path,entries:[],error:e instanceof Error?e.message:String(e)});}return true;}
+        case 'logs-start':await this.startLogs(String(m.level||'I'),String(m.package||''));return true;
+        case 'logs-stop':this.stopLogs();return true;
+      }
+      return false;
+    }
+    private startMirror(){
+      const size=this.info?.width&&this.info.height?streamSize(this.info.width,this.info.height):undefined,serial=this.device.serial;
+      const mirror=this.mirror=new ScreenMirror(adb,serial,size,connectionKind(serial)==='USB'?8_000_000:4_000_000,
+        unit=>{if(this.mirror===mirror)this.post({kind:'video',serial,...unit});},
+        ()=>{if(this.mirror===mirror)this.post({kind:'video-reset',serial});},
+        text=>{if(this.mirror!==mirror)return;this.mirror=undefined;this.lastShot=0;this.post({kind:'video-failed',serial,text});});
+      mirror.start();
+    }
+    private stopMirror(){this.mirror?.stop();this.mirror=undefined;}
+    private async liveTick(){
+      if(!this.liveOn||this.closing||this.mirror||this.shotBusy||this.panel.visible===false||Date.now()-this.lastShot<900)return;
+      this.shotBusy=true;
+      try{const png=await captureScreenshot(adb,this.device.serial);this.post({kind:'frame',serial:this.device.serial,src:'data:image/png;base64,'+png.toString('base64')});}
+      catch(e){this.post({kind:'frame-error',serial:this.device.serial,text:e instanceof Error?e.message:String(e)});}
+      finally{this.shotBusy=false;this.lastShot=Date.now();}
+    }
+    private async sendPackages(){
+      try{const list=(await adb.shell(this.device.serial,['pm','list','packages','-3'])).split(/\r?\n/).map(l=>l.trim().replace(/^package:/,'')).filter(validPackage).sort();
+        this.post({kind:'packages',list,last:context.workspaceState?.get?.('launchPackage','')});}
+      catch(e){this.post({kind:'packages',list:[],error:`Couldn't list installed apps: ${e instanceof Error?e.message:String(e)}`});}
+    }
+    private async sendAppInfo(pkg:string){
+      try{const [dump,pid]=await Promise.all([shellLiteral(adb,this.device.serial,['dumpsys','package',pkg]),shellLiteral(adb,this.device.serial,['pidof',pkg]).catch(()=>'')]);
+        this.post({kind:'app-info',package:pkg,info:parsePackageDump(dump,pid)});}
+      catch{this.post({kind:'app-info',package:pkg,info:null});}
+    }
+    private capturePath(name:unknown){
+      if(typeof name!=='string'||!/^(?:[\w.-]+\.png|recording-[\w-]+\/screen\.mp4)$/.test(name))return undefined;return join(this.root,name);
+    }
+    private async sendCaptures(select?:string){
+      const items:{name:string;kind:string;uri:string;time:number;size:number;label:string}[]=[];
+      try{
+        for(const entry of await fs.readdir(this.root,{withFileTypes:true})){
+          const name=entry.isDirectory()?`${entry.name}/screen.mp4`:entry.name;
+          if(!this.capturePath(name))continue;
+          const stat=await fs.stat(join(this.root,name)).catch(()=>undefined);if(!stat)continue;
+          items.push({name,kind:name.endsWith('.mp4')?'video':'image',uri:this.panel.webview.asWebviewUri(vscode.Uri.file(join(this.root,name))).toString(),time:stat.mtimeMs,size:stat.size,
+            label:(name.endsWith('.mp4')?'Recording':name.startsWith('frame-')?'Video frame':'Screenshot')+' · '+new Date(stat.mtimeMs).toLocaleString()});
+        }
+      }catch{/* no captures yet */}
+      items.sort((a,b)=>b.time-a.time);this.post({kind:'captures',items:items.slice(0,40),select});
+    }
+    private async diagnostics(){
+      const serial=this.device.serial;
+      const extra='echo @mem;head -3 /proc/meminfo;echo @df;df -h /data | tail -1;echo @build;getprop ro.build.display.id;echo @patch;getprop ro.build.version.security_patch;echo @abi;getprop ro.product.cpu.abi;echo @dens;wm density;echo @temp;dumpsys battery | grep -m1 temperature;true';
+      const [base,more]=await Promise.all([adb.shell(serial,[FARM_INFO_SCRIPT]),adb.shell(serial,[extra])]);
+      return {...summarizeDiagnostics(parseFarmInfo(base),more),model:this.device.model};
+    }
+    private async startLogs(level:string,pkg:string){
+      this.stopLogs();
+      if(!/^[VDIWEF]$/.test(level))throw new Error('Unknown log level.');
+      const args=['-s',this.device.serial,'logcat','-v','time'];
+      if(pkg){if(!validPackage(pkg))throw new Error('Choose a valid app.');const pid=(await shellLiteral(adb,this.device.serial,['pidof',pkg]).catch(()=>'')).trim().split(/\s+/)[0];
+        if(!/^\d+$/.test(pid)){this.post({kind:'log-ended',text:`${pkg} isn't running. Launch it, then resume.`});return;}args.push('--pid',pid);}
+      args.push('*:'+level);
+      const child=this.logs=adb.stream(args);let partial='';
+      const flush=()=>{this.logFlush=undefined;if(this.logLines.length){this.post({kind:'log',lines:this.logLines.splice(0)});}};
+      child.stdout?.on('data',(b:Buffer)=>{const parts=(partial+b.toString()).split(/\r?\n/);partial=parts.pop()||'';for(const l of parts)if(l)this.logLines.push(l.slice(0,2000));if(this.logLines.length>500)this.logLines.splice(0,this.logLines.length-500);if(!this.logFlush)this.logFlush=setTimeout(flush,150);});
+      child.on('close',()=>{if(this.logs!==child)return;this.logs=undefined;flush();this.post({kind:'log-ended',text:'Log stream ended. Resume to reconnect.'});});
+      child.on('error',e=>{if(this.logs===child)this.post({kind:'log-ended',text:'Logcat failed: '+e.message});});
+    }
+    private stopLogs(){const c=this.logs;this.logs=undefined;c?.kill();if(this.logFlush){clearTimeout(this.logFlush);this.logFlush=undefined;}this.logLines=[];}
     private async save(source:string,type:'png'|'mp4'){
       const target=await vscode.window.showSaveDialog({title:type==='png'?'Save image':'Save recording',defaultUri:vscode.Uri.file(join(homedir(),'Downloads',`mota-${Date.now()}.${type}`)),filters:type==='png'?{'PNG image':['png']}:{'MP4 video':['mp4']}});
       if(target){if(target.fsPath!==source)await fs.copyFile(source,target.fsPath);this.message='Saved '+target.fsPath;}
@@ -156,45 +260,41 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
         if(s!.videoActive||s!.busy)throw new Error('Video is still finalizing. Download it from MoTA Recordings when it finishes.');
         if(s!.videoStatus!=='saved')throw new Error('No playable video was saved. The recording may have stopped too early or capture may be blocked.');
         const dir=join(this.root,`recording-${randomUUID()}`);await fs.mkdir(dir,{recursive:true,mode:0o700});await downloadSession(this.client,this.sessionId,dir);this.lastVideo=join(dir,'screen.mp4');
-        if(!this.closing)await this.panel.webview.postMessage({kind:'video',src:this.panel.webview.asWebviewUri(vscode.Uri.file(this.lastVideo)).toString()});this.message='Video ready. Play, pause, seek or copy the current frame.';
+        if(!this.closing)await this.panel.webview.postMessage({kind:'video',src:this.panel.webview.asWebviewUri(vscode.Uri.file(this.lastVideo)).toString()});this.message='Video ready. Play, pause, seek or copy the current frame.';void this.sendCaptures(this.lastVideo.slice(this.root.length+1));
       }finally{this.capture='idle';this.sessionId='';}
     }
-    private html(){
-      const button=(action:string,label:string,extra='')=>`<button data-action="${action}" ${extra}>${label}</button>`;
-      const preset=(id:string)=>button('preset',devicePresets[id].label,`data-preset="${id}" data-busy`);
-      return page(`<style>.tabs{display:flex;gap:6px;border-bottom:1px solid var(--vscode-panel-border);padding-bottom:12px;margin-bottom:20px;flex-wrap:wrap}.tabs button[aria-selected=true]{outline:2px solid var(--vscode-focusBorder)}.control-panel[hidden]{display:none}.capture-grid{display:grid;grid-template-columns:minmax(240px,1fr) minmax(300px,1.3fr);gap:16px}.preview{display:flex;align-items:center;justify-content:center;min-height:230px;background:var(--vscode-editor-background);border-radius:8px}.preview img{max-height:540px;max-width:100%;padding:0;background:transparent}.preview video{max-width:100%;max-height:540px}.field{width:100%;margin:8px 0}textarea{font:inherit;min-height:110px;padding:12px;width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-panel-border)}.compact-input{width:100px}code{overflow-wrap:anywhere}@media(max-width:800px){.capture-grid{grid-template-columns:1fr}}</style>
-      <header><div><small>DEVICE CONTROLS</small><h1>${html(this.device.model)}</h1><code>${html(this.device.serial)}</code></div><div class="actions">${button('screenshot','Capture screenshot','data-busy')}${button('setup','Set up helper')}${button('recordings','Input recordings')}</div></header>
-      <p id="status" role="status">Ready.</p><section id="error-box" class="card" hidden><pre id="error" role="alert" tabindex="0" style="user-select:text"></pre>${button('copy-error','Copy error details')}</section>
-      <nav class="tabs" role="tablist">${[['capture','Capture'],['apps','Apps & deep links'],['input','Input'],['diagnostics','Diagnostics'],['adb','ADB & files']].map(([id,label],i)=>`<button role="tab" data-tab="${id}" aria-selected="${i===0}">${label}</button>`).join('')}</nav>
-      <section class="control-panel" data-panel="capture"><div class="capture-grid"><article class="card"><h2>Screenshot</h2><div class="actions">${button('screenshot','Capture now','data-busy')}${button('copy-image','Copy image','data-image disabled')}${button('save-image','Save PNG','data-image disabled')}</div><div class="preview"><p id="image-empty" class="muted">Capture the current device screen.</p><img id="image" alt="Current device screenshot" hidden></div></article>
-      <article class="card"><h2>Screen recording</h2><div class="actions">${button('start-video','Record screen','id="start-video" data-busy')}${button('pause-video','Pause capture','id="pause-video" disabled')}${button('stop-video','Stop','id="stop-video" disabled')}${button('save-video','Save MP4','data-video disabled')}</div><p class="muted">Screen sharing requires the helper and approval on the device. Pause capture to omit a period from the saved video.</p><div class="preview"><p id="video-empty" class="muted">Your completed recording will appear here.</p><video id="video" controls preload="metadata" crossorigin="anonymous" hidden></video></div><label>Seek <input id="seek" type="range" min="0" max="0" step="0.01" value="0" disabled style="width:100%"></label><p id="time">0:00 / 0:00</p><div class="actions">${button('toggle-play','Play / pause','data-video disabled')}${button('copy-frame','Copy current frame','data-video disabled')}${button('save-frame','Save current frame','data-video disabled')}</div></article></div>${button('open-captures','Open captures folder')}</section>
-      <section class="control-panel" data-panel="apps" hidden><article class="card"><h2>Apps</h2><label>Package ID<input class="field" id="package" placeholder="com.example.app"></label><div class="actions">${button('app','Launch','data-operation="launch" data-busy')}${button('app','Force stop','data-operation="force-stop" data-busy')}${button('app','Clear app data','data-operation="clear" data-busy')}${button('app','Uninstall','data-operation="uninstall" data-busy')}${button('install','Install APK')}${preset('packages')}</div></article><article class="card"><h2>Open deep link</h2><input id="uri" class="field" placeholder="myapp://screen?item=123" aria-label="Deep link URI"><p class="muted">Uses the optional package above to target an app.</p>${button('deeplink','Open on device','data-busy')}</article><article class="card"><h2>Device settings</h2><div class="actions">${['settings','wifi','bluetooth'].map(preset).join('')}${button('awake','Keep awake options')}${button('reboot','Reboot device','data-busy')}</div></article></section>
-      <section class="control-panel" data-panel="input" hidden><article class="card"><h2>Navigation & keys</h2><div class="actions">${['home','back','recents','wake','sleep','volumeUp','volumeDown'].map(preset).join('')}</div></article><article class="card"><h2>Touch input</h2><label>X <input id="x" class="compact-input" type="number" min="0" value="100"> Y <input id="y" class="compact-input" type="number" min="0" value="100"></label><label>End X <input id="x2" class="compact-input" type="number" min="0" value="100"> End Y <input id="y2" class="compact-input" type="number" min="0" value="600"> Duration (ms) <input id="duration" class="compact-input" type="number" min="1" value="300"></label><div class="actions">${button('tap','Tap','data-busy')}${button('swipe','Swipe / hold','data-busy')}</div><label>Type into focused field<input id="text" class="field" placeholder="Text for adb input"></label>${button('text','Send text','data-busy')}<p class="muted">ADB typing has limited Unicode support. Use the helper Text control for Unicode input.</p></article></section>
-      <section class="control-panel" data-panel="diagnostics" hidden><article class="card"><h2>Inspect this device</h2><div class="actions">${['properties','battery','memory','activities','display'].map(preset).join('')}${button('stats','Live device monitor')}${button('logs','Open logcat')}</div></article></section>
-      <section class="control-panel" data-panel="adb" hidden><article class="card"><h2>Run a device command</h2><label>Mode <select id="mode"><option value="shell">Android shell</option><option value="adb">Device-scoped ADB arguments</option></select></label><textarea id="command" spellcheck="false" placeholder="dumpsys activity activities" aria-label="Device command"></textarea><p class="muted">Commands always target ${html(this.device.serial)}. Android shell mode runs shell syntax on the device. ADB mode accepts arguments such as <code>shell dumpsys battery</code> or <code>logcat -d -t 100</code>. Text output is bounded; use the interactive shell for long-running work.</p><div class="actions">${button('command','Run on this device','data-busy')}${button('terminal','Open interactive shell')}</div></article><article class="card"><h2>Files</h2><label>Absolute device path<input id="path" class="field" placeholder="/sdcard/Download/example.txt"></label><div class="actions">${button('push','Push file…','data-busy')}${button('pull','Pull file…','data-busy')}</div></article></section>
-      <section class="card"><div class="row"><h2>Command output</h2>${button('copy-output','Copy output')}</div><pre id="output" tabindex="0" style="user-select:text">No command output yet.</pre></section>`,devicePageScript,this.panel.webview.cspSource);
-    }
-    async dispose(){if(this.closing)return;this.closing=true;clearInterval(this.timer);await this.operation;try{await this.stopCapture();}catch{/* Captures remain recoverable from the helper. */}await this.client?.dispose();}
+    async dispose(){if(this.closing)return;this.closing=true;clearInterval(this.timer);if(this.liveTimer)clearInterval(this.liveTimer);this.stopMirror();this.stopLogs();this.ai.dispose();await this.operation;try{await this.stopCapture();}catch{/* Captures remain recoverable from the helper. */}await this.client?.dispose();await this.input.dispose();}
   }
 }
-export const devicePageScript=String.raw`
-const image=document.getElementById('image'),video=document.getElementById('video'),seek=document.getElementById('seek');
-function report(error){document.getElementById('error-box').hidden=false;document.getElementById('error').textContent=String(error);api.postMessage({action:'client-error',message:String(error).slice(0,4000)});}
-function pngBlob(data){const value=atob(data.slice(data.indexOf(',')+1)),bytes=new Uint8Array(value.length);for(let i=0;i<value.length;i++)bytes[i]=value.charCodeAt(i);return new Blob([bytes],{type:'image/png'});}
-async function copyImage(data,fallback){try{if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')throw new Error('Native clipboard fallback');await navigator.clipboard.write([new ClipboardItem({'image/png':pngBlob(data)})]);api.postMessage({action:'copied'});}catch{api.postMessage(fallback);}}
-function frame(){if(video.seeking)throw new Error('Wait for the seek to finish before copying the frame.');if(!video.videoWidth||video.readyState<2)throw new Error('Wait for a video frame to load, then pause or seek.');video.pause();const canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);return canvas.toDataURL('image/png');}
-document.addEventListener('click',e=>{const tab=e.target.closest('button[data-tab]');if(tab){document.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==tab.dataset.tab);document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b===tab)));return;}const b=e.target.closest('button[data-action]');if(!b||b.disabled)return;const action=b.dataset.action;
- if(action==='copy-image'){void copyImage(image.src,{action:'copy-image'});return;}
- if(action==='copy-frame'||action==='save-frame'){try{const png=frame();if(action==='copy-frame')void copyImage(png,{action,png});else api.postMessage({action,png});}catch(error){report(error);}return;}
- if(action==='toggle-play'){if(video.paused)video.play().catch(report);else video.pause();return;}
- const value=id=>document.getElementById(id).value;
- api.postMessage({action,preset:b.dataset.preset,operation:b.dataset.operation,package:value('package'),uri:value('uri'),x:value('x'),y:value('y'),x2:value('x2'),y2:value('y2'),duration:value('duration'),text:value('text'),command:value('command'),mode:value('mode'),path:value('path')});});
-seek.addEventListener('input',()=>{video.currentTime=Number(seek.value);});
-function clock(t){if(!Number.isFinite(t))return '0:00';return Math.floor(t/60)+':'+String(Math.floor(t%60)).padStart(2,'0');}
-function updateTime(){const duration=Number.isFinite(video.duration)?video.duration:0;seek.max=String(duration);seek.value=String(video.currentTime||0);seek.disabled=!duration;document.getElementById('time').textContent=clock(video.currentTime)+' / '+clock(duration);}
-video.addEventListener('loadedmetadata',updateTime);video.addEventListener('timeupdate',updateTime);video.addEventListener('error',()=>report('This video could not be decoded in the webview. Save the MP4 and open it in a video player.'));
-window.addEventListener('message',e=>{const m=e.data;if(m.kind==='screenshot'){image.src=m.src;image.hidden=false;document.getElementById('image-empty').hidden=true;return;}if(m.kind==='video'){video.crossOrigin='anonymous';video.src=m.src;video.hidden=false;document.getElementById('video-empty').hidden=true;video.load();return;}if(m.kind!=='state')return;
- document.getElementById('status').textContent=m.message;document.getElementById('error-box').hidden=!m.error;document.getElementById('error').textContent=m.error;document.getElementById('output').textContent=m.output||'No command output yet.';
- document.querySelectorAll('[data-busy]').forEach(b=>b.disabled=m.working);document.querySelectorAll('[data-image]').forEach(b=>b.disabled=!m.hasImage);document.querySelectorAll('[data-video]').forEach(b=>b.disabled=!m.hasVideo);
- document.getElementById('start-video').disabled=m.working||m.capture!=='idle';document.getElementById('pause-video').disabled=m.working||!['recording','paused'].includes(m.capture);document.getElementById('pause-video').textContent=m.capture==='paused'?'Resume capture':'Pause capture';document.getElementById('stop-video').disabled=m.capture==='idle'||m.capture==='finalizing';});api.postMessage({action:'ready'});
-`;
+/** Parses `ls -la` output from toybox/busybox into folder entries (skips . and ..). */
+export function parseLs(out:string){
+  const entries:{name:string;dir:boolean;size:number;modified:string}[]=[];
+  for(const line of out.split(/\r?\n/)){
+    const m=line.match(/^([dlcbps-])[rwxsStT-]{9}\S*\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\d{4}-\d\d-\d\d \d\d:\d\d)\s+(.+)$/);if(!m)continue;
+    const name=m[1]==='l'?m[4].split(' -> ')[0]:m[4];if(name==='.'||name==='..')continue;
+    entries.push({name,dir:m[1]==='d'||m[1]==='l',size:+m[2],modified:m[3]});
+  }
+  return entries.sort((a,b)=>Number(b.dir)-Number(a.dir)||a.name.localeCompare(b.name));
+}
+/** Version, install dates and SDK levels from `dumpsys package <pkg>`; null when the app isn't installed. */
+export function parsePackageDump(dump:string,pid=''){
+  const get=(re:RegExp)=>dump.match(re)?.[1]?.trim();
+  const versionName=get(/versionName=(\S+)/),versionCode=get(/versionCode=(\d+)/);
+  if(!versionName&&!versionCode)return null;
+  return {version:[versionName,versionCode&&`(${versionCode})`].filter(Boolean).join(' '),installed:get(/firstInstallTime=([^\r\n]+)/),updated:get(/lastUpdateTime=([^\r\n]+)/),
+    targetSdk:get(/targetSdk=(\d+)/),minSdk:get(/minSdk=(\d+)/),debuggable:/pkgFlags=\[[^\]]*DEBUGGABLE/.test(dump),pid:pid.trim().split(/\s+/)[0]||''};
+}
+/** Health summary for the Diagnostics tab. `more` is the sectioned output of the extra diagnostics script. */
+export function summarizeDiagnostics(info:FarmInfo,more:string){
+  const sec:Record<string,string>={};let key='';
+  for(const line of more.split(/\r?\n/)){const k=line.trim().match(/^@(\w+)$/);if(k){key=k[1];sec[key]='';}else if(key)sec[key]+=line+'\n';}
+  const kb=(name:string)=>{const m=(sec.mem||'').match(new RegExp(name+':\\s*(\\d+)'));return m?+m[1]:undefined;};
+  const total=kb('MemTotal'),avail=kb('MemAvailable');
+  const df=(sec.df||'').trim().split(/\s+/);
+  const temp=(sec.temp||'').match(/temperature:\s*(-?\d+)/);
+  const dens=(sec.dens||'').match(/(?:Override|Physical) density:\s*(\d+)/g);
+  return {battery:info.battery,charging:info.charging,temperature:temp?+temp[1]/10:undefined,
+    memTotal:total?(total/1048576).toFixed(1):undefined,memUsed:total&&avail!==undefined?((total-avail)/1048576).toFixed(1):undefined,memPct:total&&avail!==undefined?Math.round((total-avail)/total*100):undefined,
+    storageTotal:df.length>=4?df[1]:undefined,storageFree:df.length>=4?df[3]:undefined,width:info.width,height:info.height,
+    density:dens?dens[dens.length-1].replace(/\D+/g,''):undefined,build:(sec.build||'').trim(),patch:(sec.patch||'').trim(),abi:(sec.abi||'').trim(),managed:info.managed};
+}
