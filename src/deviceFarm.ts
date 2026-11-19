@@ -5,6 +5,7 @@ import { Adb, Device, mergeKnownDevices, parseServices, validAddress } from './a
 import { captureScreenshot, shellLiteral } from './deviceControl';
 import { devicePresets } from './devicePage';
 import { page } from './ui';
+import { ScreenMirror, streamSize } from './h264';
 
 export interface FarmInfo { manufacturer: string; android: string; sdk: string; width: number | null; height: number | null; battery: number | null; charging: boolean }
 export const FARM_INFO_SCRIPT = 'echo @mfr;getprop ro.product.manufacturer;echo @rel;getprop ro.build.version.release;echo @sdk;getprop ro.build.version.sdk;echo @size;wm size;echo @bat;dumpsys battery';
@@ -75,6 +76,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
     private lastFrame = new Map<string, number>();
     private capturing = new Set<string>();
     private focus: string | undefined;
+    private mirror?: ScreenMirror;
     private live = true;
     private closed = false;
     private listing = false;
@@ -88,7 +90,8 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
       this.panel.webview.onDidReceiveMessage(m => { void this.message(m).catch(e => this.notice(e instanceof Error ? e.message : String(e), true)); });
       this.timer = setInterval(() => this.tick(), 400);
     }
-    dispose() { this.closed = true; this.qrToken++; clearInterval(this.timer); }
+    dispose() { this.closed = true; this.qrToken++; this.stopMirror(); clearInterval(this.timer); }
+    private stopMirror() { this.mirror?.stop(); this.mirror = undefined; }
     private post(m: unknown) { if (!this.closed) void this.panel.webview.postMessage(m); }
     private notice(text: string, error = false) { this.post({ kind: 'notice', text, error }); }
     private online(serial: unknown) { const d = typeof serial === 'string' ? this.devices.get(serial) : undefined; return d?.state === 'device' ? d : undefined; }
@@ -101,7 +104,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         const merged = mergeKnownDevices(found, context.globalState.get<Device[]>('knownDevices', []));
         const all = [...found, ...merged.filter(d => !found.includes(d)).map(d => ({ ...d, state: 'remembered' }))];
         this.devices = new Map(all.map(d => [d.serial, d]));
-        if (this.focus && !this.online(this.focus)) { this.focus = undefined; this.post({ kind: 'focus-lost' }); }
+        if (this.focus && !this.online(this.focus)) { this.focus = undefined; this.stopMirror(); this.post({ kind: 'focus-lost' }); }
         const now = Date.now();
         await Promise.all(found.filter(d => d.state === 'device' && now - (this.info.get(d.serial)?.at || 0) > INFO_MS).map(async d => {
           try { this.info.set(d.serial, { at: now, value: parseFarmInfo(await adb.shell(d.serial, [FARM_INFO_SCRIPT])) }); } catch { /* shown without details */ }
@@ -119,7 +122,9 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
       for (const d of this.devices.values()) {
         if (d.state !== 'device' || this.capturing.has(d.serial)) continue;
         const focused = d.serial === this.focus;
-        if (!focused && (!this.live || this.capturing.size >= 2 || now - (this.lastFrame.get(d.serial) || 0) < THUMBNAIL_MS)) continue;
+        if (focused && this.mirror) continue; // live video replaces screenshots
+        // While a live view is open, thumbnails pause so the focused device gets the bandwidth.
+        if (!focused && (!this.live || this.focus || this.capturing.size >= 2 || now - (this.lastFrame.get(d.serial) || 0) < THUMBNAIL_MS)) continue;
         void this.capture(d.serial);
       }
     }
@@ -138,7 +143,17 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
       switch (m.action) {
         case 'ready': case 'refresh': this.lastList = 0; await this.list(); return;
         case 'live': this.live = !!m.on; return;
-        case 'focus': this.focus = this.online(m.serial)?.serial; if (this.focus) this.lastFrame.set(this.focus, 0); return;
+        case 'focus': {
+          this.stopMirror();
+          const d = this.online(m.serial);
+          this.focus = d?.serial;
+          if (!d) return;
+          this.lastFrame.set(d.serial, 0);
+          if (m.stream) this.startMirror(d);
+          return;
+        }
+        case 'video-error': this.mirror?.restart(); return;
+        case 'video-unsupported': this.stopMirror(); if (this.focus) this.lastFrame.set(this.focus, 0); return;
         case 'gesture': case 'key': case 'text': {
           const d = this.online(m.serial); if (!d) throw new Error('The device is no longer available.');
           if (m.action === 'gesture') await shellLiteral(adb, d.serial, gestureArgs(m));
@@ -159,6 +174,16 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         case 'pair-code': return this.withStatus('code', () => this.pairCode(String(m.address ?? '').trim(), m.code));
         case 'bulk': return this.bulk(String(m.command), Array.isArray(m.serials) ? m.serials : []);
       }
+    }
+    private startMirror(d: Device) {
+      const info = this.info.get(d.serial)?.value;
+      const size = info?.width && info.height ? streamSize(info.width, info.height) : undefined;
+      const serial = d.serial;
+      const mirror = this.mirror = new ScreenMirror(adb, serial, size, connectionKind(serial) === 'USB' ? 8_000_000 : 4_000_000,
+        unit => { if (this.mirror === mirror) this.post({ kind: 'video', serial, ...unit }); },
+        () => { if (this.mirror === mirror) this.post({ kind: 'video-reset', serial }); },
+        text => { if (this.mirror !== mirror) return; this.mirror = undefined; this.lastFrame.set(serial, 0); this.post({ kind: 'video-failed', serial, text }); });
+      mirror.start();
     }
     private status(tab: string, state: 'working' | 'ok' | 'error', text: string) { this.post({ kind: 'add-status', tab, state, text }); }
     private async withStatus(tab: string, run: () => Promise<string>) {
@@ -295,11 +320,11 @@ button.small{padding:5px 10px;font-size:12px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.dialog ol{padding-left:20px;margin:6px 0 12px}
 .viewer{display:flex;gap:20px;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:14px;padding:18px;max-height:100%;max-width:100%}
 .live{position:relative;background:#000;border-radius:10px;display:flex;align-items:center;justify-content:center;min-width:200px}
-.live img{max-height:calc(100vh - 80px);max-width:min(60vw,700px);touch-action:none;user-select:none;-webkit-user-drag:none;cursor:crosshair;border-radius:10px}
+.live img,.live canvas{max-height:calc(100vh - 80px);max-width:min(60vw,700px);touch-action:none;user-select:none;-webkit-user-drag:none;cursor:crosshair;border-radius:10px}
 .side{display:flex;flex-direction:column;gap:10px;width:240px}
 .side .keys{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .side input{width:100%}
-@media (max-width:700px){.viewer{flex-direction:column}.side{width:auto}.live img{max-width:100%}}
+@media (max-width:700px){.viewer{flex-direction:column}.side{width:auto}.live img,.live canvas{max-width:100%}}
 </style>
 <header><div><small>ANDROID WORKSPACE</small><h1>Device farm</h1><p class="muted" id="summary">Looking for devices…</p></div>
 <div class="actions"><button data-top="add">Add device</button><button class="secondary" data-top="refresh">Refresh</button></div></header>
@@ -318,9 +343,9 @@ button.small{padding:5px 10px;font-size:12px}
 <p class="error" id="error"></p>
 <div class="farm" id="farm"></div>
 <div id="overlay" hidden><div class="viewer" role="dialog" aria-modal="true" aria-labelledby="vtitle">
-<div class="live"><img id="liveimg" alt="Live device screen. Click to tap, drag to swipe." draggable="false"><span class="msg" id="livemsg">Connecting…</span></div>
+<div class="live"><canvas id="livecanvas" hidden role="img" aria-label="Live device video. Click to tap, drag to swipe."></canvas><img id="liveimg" alt="Live device screen. Click to tap, drag to swipe." draggable="false"><span class="msg" id="livemsg">Connecting…</span></div>
 <div class="side"><div><h2 id="vtitle"></h2><div class="sub" id="vsub"></div></div>
-<small class="muted">Click to tap · drag to swipe. The screen refreshes continuously while this view is open.</small>
+<small class="muted">Click to tap · drag to swipe. <span id="livemode"></span></small>
 <div class="keys"><button class="secondary small" data-key="back">Back</button><button class="secondary small" data-key="home">Home</button><button class="secondary small" data-key="recents">Recents</button><button class="secondary small" data-key="wake">Wake</button><button class="secondary small" data-key="volumeUp">Volume +</button><button class="secondary small" data-key="volumeDown">Volume −</button><button class="secondary small" data-key="sleep">Sleep</button></div>
 <form id="textform" class="row" style="gap:6px;flex-wrap:nowrap"><input id="text" placeholder="Type text on device" aria-label="Text to type"><button class="small">Send</button></form>
 <button class="secondary" data-view="controls">Full controls</button><button class="secondary" data-view="logs">Logs</button><button data-view="close">Close</button>
@@ -367,8 +392,9 @@ const device=s=>devices.find(d=>d.serial===s);
 function notice(text,error){const n=$('notice');n.textContent=text;n.className=error?'error':'';n.hidden=false;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>n.hidden=true,error?10000:4000);}
 function openView(s){const d=device(s);if(!d)return;focus=s;const i=d.info||{};$('vtitle').textContent=d.model;$('vsub').textContent=[i.manufacturer,i.android&&'Android '+i.android,d.kind,d.serial].filter(Boolean).join(' · ');
  const img=$('liveimg');if(frames[s]){img.src=frames[s];img.hidden=false;$('livemsg').hidden=true;}else{img.hidden=true;$('livemsg').hidden=false;$('livemsg').textContent='Connecting…';}
- $('overlay').hidden=false;api.postMessage({action:'focus',serial:s});render();img.focus();}
-function closeView(){if(!focus)return;focus=null;$('overlay').hidden=true;api.postMessage({action:'focus',serial:null});render();}
+ canvas.hidden=true;resetDecoder();decodeErrors=0;$('overlay').hidden=false;render();
+ videoSupported().then(ok=>{if(focus!==s)return;$('livemode').textContent=ok?'Live video.':'Screenshot mode (this VS Code cannot decode H.264).';api.postMessage({action:'focus',serial:s,stream:ok});});}
+function closeView(){if(!focus)return;focus=null;resetDecoder();$('overlay').hidden=true;api.postMessage({action:'focus',serial:null});render();}
 document.addEventListener('click',e=>{const t=e.target;
  if(t.matches('[data-select]')){const s=serialOf(t);t.checked?selected.add(s):selected.delete(s);render();return;}
  const b=t.closest('[data-card],[data-top],[data-bulk],[data-key],[data-view],[data-tab],[data-add],[data-recent]');if(!b)return;
@@ -403,21 +429,45 @@ $('codeform').addEventListener('submit',e=>{e.preventDefault();const code=$('pai
 $('search').addEventListener('input',render);$('status').addEventListener('change',render);
 $('live').addEventListener('change',e=>{api.postMessage({action:'live',on:e.target.checked});render();});
 $('textform').addEventListener('submit',e=>{e.preventDefault();const v=$('text').value;if(v&&focus){api.postMessage({action:'text',serial:focus,text:v});$('text').value='';}});
-let down=null;const img=$('liveimg');
-const point=e=>{const r=img.getBoundingClientRect();return{x:Math.round((e.clientX-r.left)*img.naturalWidth/r.width),y:Math.round((e.clientY-r.top)*img.naturalHeight/r.height),cx:e.clientX,cy:e.clientY};};
-img.addEventListener('pointerdown',e=>{if(!img.naturalWidth)return;img.setPointerCapture(e.pointerId);down={...point(e),t:performance.now()};e.preventDefault();});
-img.addEventListener('pointerup',e=>{if(!down||!focus)return;const p=point(e),clamp=(v,m)=>Math.max(0,Math.min(m-1,v));
- const x=clamp(down.x,img.naturalWidth),y=clamp(down.y,img.naturalHeight),x2=clamp(p.x,img.naturalWidth),y2=clamp(p.y,img.naturalHeight);
- if(Math.hypot(p.cx-down.cx,p.cy-down.cy)<8)api.postMessage({action:'gesture',serial:focus,type:'tap',x,y});
- else api.postMessage({action:'gesture',serial:focus,type:'swipe',x,y,x2,y2,duration:performance.now()-down.t});down=null;});
-img.addEventListener('pointercancel',()=>{down=null;});
+let down=null;const img=$('liveimg'),canvas=$('livecanvas'),ctx=canvas.getContext('2d');
+// --- live H.264 video (WebCodecs); screenshots are the fallback
+let decoder=null,decoderCodec='',waitKey=true,timestamp=0,decodeErrors=0,supported;
+function videoSupported(){if(supported!==undefined)return Promise.resolve(supported);if(typeof VideoDecoder!=='function')return Promise.resolve(supported=false);
+ return VideoDecoder.isConfigSupported({codec:'avc1.42e01f',optimizeForLatency:true}).then(r=>supported=!!r.supported,()=>supported=false);}
+function resetDecoder(){try{if(decoder&&decoder.state!=='closed')decoder.close();}catch{}decoder=null;decoderCodec='';waitKey=true;}
+function drawFrame(frame){if(!focus){frame.close();return;}
+ if(canvas.width!==frame.displayWidth||canvas.height!==frame.displayHeight){canvas.width=frame.displayWidth;canvas.height=frame.displayHeight;}
+ ctx.drawImage(frame,0,0);frame.close();if(canvas.hidden){canvas.hidden=false;img.hidden=true;$('livemsg').hidden=true;}}
+function decoderFailed(e){resetDecoder();if(++decodeErrors>=3){api.postMessage({action:'video-unsupported'});$('livemode').textContent='Screenshot mode (video decoding failed: '+(e&&e.message||e)+').';canvas.hidden=true;}else api.postMessage({action:'video-error'});}
+function onVideo(m){if(m.serial!==focus||decodeErrors>=3)return;
+ if(m.key&&m.codec&&(!decoder||decoderCodec!==m.codec)){resetDecoder();
+  try{decoder=new VideoDecoder({output:drawFrame,error:decoderFailed});decoder.configure({codec:m.codec,optimizeForLatency:true});decoderCodec=m.codec;}catch(e){decoderFailed(e);return;}}
+ if(!decoder||(waitKey&&!m.key))return;waitKey=false;
+ try{decoder.decode(new EncodedVideoChunk({type:m.key?'key':'delta',timestamp:(timestamp++)*33333,data:bytes(m.data)}));}catch(e){decoderFailed(e);}}
+function bytes(d){return d instanceof Uint8Array?d:d instanceof ArrayBuffer?new Uint8Array(d):ArrayBuffer.isView(d)?new Uint8Array(d.buffer,d.byteOffset,d.byteLength):new Uint8Array(Array.isArray(d)?d:Object.values(d||{}));}
+// --- pointer input on whichever surface is showing
+function surface(){if(!canvas.hidden&&canvas.width){const i=(device(focus)||{}).info||{};let w=i.width||canvas.width,h=i.height||canvas.height;
+  if((canvas.width>canvas.height)!==(w>h))[w,h]=[h,w];return{el:canvas,w,h};}
+ return img.naturalWidth?{el:img,w:img.naturalWidth,h:img.naturalHeight}:null;}
+const point=(e,s)=>{const r=s.el.getBoundingClientRect();return{x:Math.round((e.clientX-r.left)*s.w/r.width),y:Math.round((e.clientY-r.top)*s.h/r.height),cx:e.clientX,cy:e.clientY};};
+for(const el of [img,canvas]){
+ el.style.touchAction='none';el.style.cursor='crosshair';
+ el.addEventListener('pointerdown',e=>{const s=surface();if(!s||s.el!==el)return;el.setPointerCapture(e.pointerId);down={...point(e,s),t:performance.now(),s};e.preventDefault();});
+ el.addEventListener('pointerup',e=>{if(!down||!focus)return;const s=down.s,p=point(e,s),clamp=(v,m)=>Math.max(0,Math.min(m-1,v));
+  const x=clamp(down.x,s.w),y=clamp(down.y,s.h),x2=clamp(p.x,s.w),y2=clamp(p.y,s.h);
+  if(Math.hypot(p.cx-down.cx,p.cy-down.cy)<8)api.postMessage({action:'gesture',serial:focus,type:'tap',x,y});
+  else api.postMessage({action:'gesture',serial:focus,type:'swipe',x,y,x2,y2,duration:performance.now()-down.t});down=null;});
+ el.addEventListener('pointercancel',()=>{down=null;});}
 window.addEventListener('message',e=>{const m=e.data;
  if(m.kind==='devices'){$('error').textContent=m.error?'ADB unavailable: '+m.error:'';const json=JSON.stringify(m.devices);
   devices=m.devices;for(const s of [...selected])if(!devices.some(d=>d.serial===s&&d.state==='device'))selected.delete(s);if(json!==last){last=json;render();}}
  else if(m.kind==='frame'){frames[m.serial]=m.src;delete frameErrors[m.serial];
   const el=document.querySelector('.dev[data-serial="'+CSS.escape(m.serial)+'"] .screen');
   if(el){const i=el.querySelector('img');if(i)i.src=m.src;else{const msg=el.querySelector('.msg');if(msg)msg.outerHTML='<img data-serial="'+esc(m.serial)+'" src="'+m.src+'" alt="Screen">';}}
-  if(m.serial===focus){img.src=m.src;img.hidden=false;$('livemsg').hidden=true;}}
+  if(m.serial===focus&&canvas.hidden){img.src=m.src;img.hidden=false;$('livemsg').hidden=true;}}
+ else if(m.kind==='video')onVideo(m);
+ else if(m.kind==='video-reset'){if(m.serial===focus)waitKey=true;}
+ else if(m.kind==='video-failed'){if(m.serial===focus){resetDecoder();canvas.hidden=true;$('livemode').textContent='Screenshot mode (video stream unavailable).';notice('Live video stopped: '+m.text,true);}}
  else if(m.kind==='frame-error'){frameErrors[m.serial]=m.text;if(m.serial===focus&&!frames[m.serial]){$('livemsg').textContent=m.text;}if(!frames[m.serial])render();}
  else if(m.kind==='focus-lost'){notice('The device disconnected.',true);closeView();}
  else if(m.kind==='notice')notice(m.text,m.error);
