@@ -156,6 +156,10 @@
         "shortTitle": "Connect AI agents"
       },
       {
+        "command": "mota.installHooks",
+        "title": "MoTA: Install Claude Code Hooks (Phone Sharing)"
+      },
+      {
         "command": "mota.ai.setApiKey",
         "title": "MoTA: Set Anthropic API Key"
       },

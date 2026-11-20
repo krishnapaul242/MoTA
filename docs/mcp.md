@@ -38,6 +38,18 @@ Several Claude Code, Codex or Cursor sessions, and MoTA's own assistant, can use
 - `release_device` gives phones back at once.
 - The farm shows who uses each phone, who is waiting, and pending takeover requests on its card.
 
+### When sessions use adb, maestro or Gradle themselves
+
+Agents can also change phones with their own shell commands, which MoTA doesn't see. For Claude Code, run **MoTA: Install Claude Code Hooks (Phone Sharing)** (also in the **MoTA MCP** status bar menu). It adds hooks to `~/.claude/settings.json`, keeping your other settings, with a backup in `settings.json.mota-backup`:
+
+- Before a shell command that changes a phone (`adb install`, `adb shell input …`, `maestro test`, `gradlew connectedAndroidTest`, `installDebug` …), the session claims that phone. Read-only commands such as `adb logcat`, `adb pull` or `adb shell dumpsys` don't count. Gradle device tasks use every connected phone unless `ANDROID_SERIAL` is set.
+- If another session is using the phone, MoTA asks you in VS Code, the same as a takeover. If you say no, or it is still in use after 2 minutes, the command is blocked and Claude is told why.
+- When the session finishes a reply or waits for your next message, its phones are free to others at once. When it ends, they are released. A permission prompt doesn't free them, because the command waiting for approval is about to use the phone.
+- The hooks send their events to MoTA with `curl`, using a token in `~/.mota/hook.header` (readable only by you). If MoTA isn't running, they do nothing.
+- They apply to Claude Code sessions started after installing. Remove them from the same menu. macOS and Linux only for now.
+
+Codex and other agents are told in MoTA's instructions to call `acquire_device` before changing a phone with their own commands. MoTA also notices Maestro and instrumentation tests they start.
+
 Sessions are told apart by their process: one Claude Code or Codex window is one session, labelled with its program and folder. On Windows, all outside agents share one identity for now.
 
 ## Security

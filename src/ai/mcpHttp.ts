@@ -5,13 +5,16 @@ import type { AddressInfo } from 'node:net';
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { leaseGate, type LeaseGate, type LeaseStore } from '../leases';
-import { callerOfSocket } from './caller';
+import { leaseGate, type Holder, type LeaseGate, type LeaseStore } from '../leases';
+import { callerOfSocket, peerPid, sessionAbove, UNKNOWN_AGENT } from './caller';
+import { handleHook } from './hooks';
 import { riskOf, targetSerials } from './policy';
 import { describeCall } from './prompts';
 import { motaTools, type ToolDeps } from './tools';
 
 export const MCP_PATH = '/mcp';
+/** Where Claude Code hooks (installed by "MoTA: Install Claude Code Hooks") send their events. */
+export const HOOK_PATH = '/hook';
 
 /** propose_plan shows a card in MoTA's own Claude bar; outside agents have their own approval prompts. */
 const NOT_SERVED = new Set(['propose_plan']);
@@ -20,7 +23,8 @@ const INSTRUCTIONS = `MoTA controls the Android phones connected to the user's c
 Start with list_devices and use the serials it returns. Prefer ui_tree over screenshots for finding what to tap: it is cheaper and gives exact tap centres in device pixels.
 Maestro flows live in the workspace flows folder; write_flow can only write there. run_flow takes about 40 s of Maestro start-up before the flow runs.
 Calls that delete data (clear_app_data, uninstall_app, overwriting a flow) wait for the user to approve them in VS Code.
-Other sessions and agents share these phones. list_devices shows who is using each one. A call that changes a phone claims it for you; it is refused while someone else is using that phone or a test is running on it. To get such a phone, call acquire_device: mode "wait" waits in line, mode "takeover" asks the user to hand it over. Phones you stop using become free to others after a while; call release_device when you are done.`;
+Other sessions and agents share these phones. list_devices shows who is using each one. A call that changes a phone claims it for you; it is refused while someone else is using that phone or a test is running on it. To get such a phone, call acquire_device: mode "wait" waits in line, mode "takeover" asks the user to hand it over. Phones you stop using become free to others after a while; call release_device when you are done.
+Before you change a phone with your own shell commands (adb, maestro, gradle install or connected tests), call acquire_device for it, so other sessions know it is in use.`;
 
 export interface McpDeps extends Omit<ToolDeps, 'requestPlan' | 'onScreenshot' | 'lease'> {
   /** Phone leases shared with other sessions and windows; without it, any caller may use any phone. */
@@ -31,6 +35,8 @@ export interface McpDeps extends Omit<ToolDeps, 'requestPlan' | 'onScreenshot' |
   confirm: (tool: string, summary: string, args: Record<string, unknown>) => Promise<boolean>;
   /** One line per tool call, for the user to see what agents do. */
   log: (line: string) => void;
+  /** Finds the session above a hook's process (tests replace it). */
+  sessionAbove?: (pid: number | undefined) => Promise<Holder>;
 }
 
 /** Builds the same tool definitions the Agent SDK's `tool()` would, without loading the SDK. */
@@ -109,17 +115,36 @@ export class McpHttpServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse) {
-    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname !== MCP_PATH) return reply(res, 404, `MoTA serves MCP at ${MCP_PATH}.`);
+    const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    if (path !== MCP_PATH && path !== HOOK_PATH) return reply(res, 404, `MoTA serves MCP at ${MCP_PATH}.`);
     if (!loopbackHost(req.headers.host)) return reply(res, 403, 'Only local connections are allowed.');
     // MCP clients don't send Origin; browsers always do on cross-site requests.
     if (req.headers.origin) return reply(res, 403, 'Requests from web pages are not allowed.');
     if (!validBearer(req.headers.authorization, this.deps.token())) return reply(res, 401, 'Missing or wrong MoTA access token. Run "MoTA: Connect AI Agents (MCP)" in VS Code to get it.');
     if (req.method !== 'POST') return reply(res, 405, 'This server is stateless; send JSON-RPC with POST.');
+    if (path === HOOK_PATH) return this.hook(req, res);
     const lease = this.deps.leases ? leaseGate(this.deps.leases, () => callerOfSocket(req.socket)) : undefined;
     const server = buildMcpServer(this.deps, this.version, lease);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { void transport.close(); void server.close(); });
     await server.connect(transport as never);
     await transport.handleRequest(req, res);
+  }
+
+  /** A Claude Code hook event: JSON in, the hook's JSON output back. The session is the agent above the hook's curl process. */
+  private async hook(req: IncomingMessage, res: ServerResponse) {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req) { size += (chunk as Buffer).length; if (size > 1024 * 1024) return reply(res, 413, 'Hook input is too large.'); chunks.push(chunk as Buffer); }
+    let input: unknown;
+    try { input = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { return reply(res, 400, 'Send the hook input as JSON.'); }
+    const leases = this.deps.leases;
+    const port = req.socket.remotePort;
+    const find = this.deps.sessionAbove ?? (async (pid: number | undefined) => pid ? sessionAbove(pid) : UNKNOWN_AGENT);
+    let session: Promise<Holder> | undefined;
+    const out = leases ? await handleHook(input, () => session ??= peerPid(port).then(find), { adb: this.deps.adb, leases, log: this.deps.log }).catch(e => {
+      this.deps.log(`hook failed: ${e instanceof Error ? e.message : e}`); return {};
+    }) : {};
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(out));
   }
 }

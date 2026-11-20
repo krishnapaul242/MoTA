@@ -6,6 +6,7 @@ import type { Adb } from './adb';
 import { aiHost, resolveClaude } from './ai/host';
 import { MCP_PATH, McpHttpServer } from './ai/mcpHttp';
 import { backupFlow } from './ai/tools';
+import { hookHeaderExists, installHooks, removeHooks, writeHookHeader } from './hookSetup';
 
 const TOKEN_KEY = 'mota.mcp.token';
 export const DEFAULT_MCP_PORT = 6682;
@@ -96,6 +97,8 @@ export function registerMcp(vscode: typeof VSCode, context: VSCode.ExtensionCont
       { label: '$(copy) Copy Cursor config', description: 'for .cursor/mcp.json or ~/.cursor/mcp.json', id: 'cursor' },
       { label: '$(copy) Copy Codex config', description: 'for ~/.codex/config.toml', id: 'codex' },
       { label: '$(copy) Copy URL and token', description: 'for other MCP clients (Streamable HTTP, bearer token)', id: 'raw' },
+      { label: '$(shield) Install Claude Code hooks', description: 'share phones when sessions run adb, maestro or gradle themselves', id: 'hooks' },
+      { label: '$(trash) Remove Claude Code hooks', id: 'unhooks' },
       { label: '$(output) Show agent activity', id: 'log' },
       { label: '$(key) Reset access token', description: 'agents set up before must be set up again', id: 'reset' },
       { label: '$(circle-slash) Stop serving', id: 'off' },
@@ -117,15 +120,40 @@ export function registerMcp(vscode: typeof VSCode, context: VSCode.ExtensionCont
       case 'log': output.show(); return;
       case 'reset': {
         const sure = await vscode.window.showWarningMessage('Reset MoTA\'s access token?', { modal: true, detail: 'Agents you already connected will be refused until you add MoTA to them again.' }, 'Reset');
-        if (sure) { await loadToken(true); void vscode.window.showInformationMessage('MoTA has a new access token. Run this command again to connect your agents.'); }
+        if (sure) { await loadToken(true); if (await hookHeaderExists()) await writeHookHeader(token); void vscode.window.showInformationMessage('MoTA has a new access token. Run this command again to connect your agents.'); }
         return;
       }
       case 'off': await config().update('mcp.enabled', false, vscode.ConfigurationTarget.Global); return;
+      case 'hooks': return hooks(http.port!);
+      case 'unhooks': {
+        try { const file = await removeHooks(); void vscode.window.showInformationMessage(`Removed MoTA's hooks from ${file}. Restart Claude Code sessions for it to take effect.`); }
+        catch (e) { void vscode.window.showErrorMessage(`Couldn't remove MoTA's hooks: ${e instanceof Error ? e.message : e}`); }
+        return;
+      }
     }
+  }
+
+  /** Adds MoTA's hooks to Claude Code's user settings, after the user agrees. */
+  async function hooks(port: number) {
+    if (process.platform === 'win32') { void vscode.window.showWarningMessage('MoTA\'s Claude Code hooks need macOS or Linux for now.'); return; }
+    const ok = await vscode.window.showInformationMessage('Add MoTA\'s hooks to Claude Code (~/.claude/settings.json)?', {
+      modal: true,
+      detail: 'Before a Claude Code session runs adb, maestro or a Gradle device task itself, MoTA claims that phone for it, and asks you here when another session is using it. When a session finishes a reply or waits for you, its phones are free to others. Your other settings and hooks are kept, with a backup in settings.json.mota-backup. If MoTA is not running, the hooks do nothing.',
+    }, 'Add hooks');
+    if (ok !== 'Add hooks') return;
+    try {
+      const file = await installHooks(port, token);
+      output.appendLine(`Installed Claude Code hooks in ${file}`);
+      void vscode.window.showInformationMessage('Added MoTA\'s hooks to Claude Code. They apply to sessions started from now on.');
+    } catch (e) { void vscode.window.showErrorMessage(`Couldn't add MoTA's hooks: ${e instanceof Error ? e.message : e}`); }
   }
 
   context.subscriptions.push(output, status,
     vscode.commands.registerCommand('mota.mcpSetup', setup),
+    vscode.commands.registerCommand('mota.installHooks', async () => {
+      if (!config().get<boolean>('mcp.enabled', false)) { await setup(); return; }
+      await sync(); if (http) await hooks(http.port!);
+    }),
     vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('mota.mcp')) void sync(); }),
     { dispose: () => { void http?.stop(); http = undefined; } });
   void sync();
