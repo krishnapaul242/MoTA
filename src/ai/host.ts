@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import type * as VSCode from 'vscode';
 import type { Adb } from '../adb';
+import { externalWorkDetector } from '../externalBusy';
 import { InputRouter } from '../helperInput';
 import { leaseGate, LeaseStore, type Answer, type Holder, type TakeoverPrompt } from '../leases';
 import { discoverFlows, filterByTags } from '../maestro/flows';
@@ -419,6 +420,11 @@ export class AiHostImpl implements AiHost {
   }
 }
 
+/** This window's phone leases, or undefined where the host can't start (tests without VS Code). */
+export function sharedLeases(context: VSCode.ExtensionContext, adb: Adb): LeaseStore | undefined {
+  try { return aiHost(context, adb).leases; } catch { return undefined; }
+}
+
 /** A MoTA assistant conversation as a phone holder. Its phones are tied to this window's process. */
 export function conversationHolder(conv: { convId: string; title: string }, pid = process.pid): Holder {
   return { id: `chat:${pid}:${conv.convId}`, label: `MoTA's assistant ("${conv.title.length > 40 ? conv.title.slice(0, 39) + '…' : conv.title}")`, pid };
@@ -462,6 +468,7 @@ export function aiHost(context: VSCode.ExtensionContext, adb: Adb): AiHost {
       maxSessionIdleSeconds: () => config().get<number>('lease.maxSessionIdleSeconds', 900),
       prompt: (p, decided) => takeoverPrompt(vscode, p, decided),
       cancelWork: serial => instance?.runner.cancelOn(serial),
+      detect: externalWorkDetector(adb),
     }),
   });
   const created = instance;

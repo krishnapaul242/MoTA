@@ -9,6 +9,8 @@ import { launchApp } from './deviceActions';
 import { validPackage } from './apk';
 import { page } from './ui';
 import { installHelper } from './helperInput';
+import { sharedLeases } from './ai/host';
+import { BusyMark } from './leases';
 
 export function registerRecordings(vscode: typeof VSCode, context: VSCode.ExtensionContext, adb: Adb,
   choose: (item?: any) => Promise<Device[]>) {
@@ -46,6 +48,12 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
     private finalizePromise?: Promise<void>;
     private replaying = false;
     private replayRun?: { dir: string; startedAt: string };
+    /** Marks the phone busy for other sessions while recording or replaying. */
+    private busy = new BusyMark(sharedLeases(context, adb));
+    private syncBusy() {
+      const serial = this.disposed ? undefined : this.target?.serial;
+      return this.busy.set(this.active || this.videoPending ? serial : this.replaying ? serial : undefined, this.replaying ? 'a MoTA replay' : 'a MoTA recording');
+    }
     constructor(target?: Device) {
       this.target = target;
       const configured = vscode.workspace.getConfiguration('mota').get<string>('recordingsDirectory', '');
@@ -237,6 +245,7 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
           await this.saveReplay(this.status.message === 'Replay complete' ? 'completed' : 'failed'); await this.render();
         }
         await this.progress();
+        void this.syncBusy();
       } catch (e) {
         this.reportError('monitor recording',e);
         if (this.active) { await this.active.raw?.stop().catch(() => {}); this.active.meta.complete = false; this.active.meta.error = this.message; await atomicJson(join(this.active.dir, 'session.json'), this.active.meta).catch(() => {}); this.active = undefined; }
@@ -245,6 +254,7 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
       } finally { this.polling = false; }
     }
     async render() {
+      void this.syncBusy();
       if (this.disposed) return;
       this.records = await this.store.list(); if (this.selected) this.selected = this.records.find(r => r.meta.id === this.selected!.meta.id) || this.selected;
       const selected = this.selected;
@@ -271,6 +281,7 @@ export function registerRecordings(vscode: typeof VSCode, context: VSCode.Extens
       try { if (this.active) await this.finish(); if (this.replaying) { await this.client?.request('cancel'); await this.saveReplay('cancelled'); } }
       catch { /* Local incomplete metadata remains recoverable. */ }
       await this.client?.dispose();
+      await this.syncBusy();
     }
   }
 }

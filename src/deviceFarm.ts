@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Adb, Device, mergeKnownDevices, parseServices, validAddress } from './adb';
 import { captureScreenshot, deepLinkArgs, shellLiteral } from './deviceControl';
-import { devicePresets } from './devicePage';
+import { devicePresets, USER_INPUT } from './devicePage';
 import { validPackage } from './apk';
 import { launchApp } from './deviceActions';
 import { farmHtml } from './webview/farmView';
@@ -14,7 +14,7 @@ import { liveEngine, LiveMirror, liveTouch } from './liveMirror';
 import { HelperClient, HELPER_PACKAGE } from './helperClient';
 import { gestureParams, InputRouter } from './helperInput';
 import { AdbConsole } from './adbConsole';
-import { aiHost as sharedHost } from './ai/host';
+import { sharedLeases } from './ai/host';
 import { ago, type DeviceUse } from './leases';
 import { HelperDownloadServer, lanAddresses, parseDeviceOwner, provisioningPayload, readHelperMetadata } from './provisioning';
 
@@ -156,7 +156,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         await Promise.all(found.filter(d => d.state === 'device' && now - (this.info.get(d.serial)?.at || 0) > INFO_MS).map(async d => {
           try { this.info.set(d.serial, { at: now, value: parseFarmInfo(await adb.shell(d.serial, [FARM_INFO_SCRIPT])) }); } catch { /* shown without details */ }
         }));
-        const uses = await sharedHost(context, adb).leases?.use(found.map(d => d.serial)).catch(() => undefined);
+        const uses = await sharedLeases(context, adb)?.use(found.map(d => d.serial)).catch(() => undefined);
         this.post({ kind: 'devices', devices: all.map(d => ({ ...d, kind: connectionKind(d.serial), info: this.info.get(d.serial)?.value, use: uses && farmUse(uses.get(d.serial), now) })) });
       } catch (e) {
         this.post({ kind: 'devices', devices: [], error: e instanceof Error ? e.message : String(e) });
@@ -191,6 +191,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
       if (isAiMessage(m)) return this.ai.handle(m);
       if (!m || typeof m.action !== 'string') return;
       if (m.action.startsWith('console-')) return this.console.message(m, [...this.devices.values()].filter(d => d.state === 'device'));
+      if (USER_INPUT.has(m.action) && typeof m.serial === 'string') sharedLeases(context, adb)?.noteUser(m.serial);
       switch (m.action) {
         case 'ready': case 'refresh': this.lastList = 0; await this.list(); return;
         case 'live': this.live = !!m.on; return;

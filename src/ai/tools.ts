@@ -283,7 +283,7 @@ function withLease<T>(def: T, lease: LeaseGate): T {
     if ('refused' in entered) return text(entered.refused, true);
     try {
       const result = await d.handler(args, extra);
-      const notes = await lease.notes().catch(() => '');
+      const notes = [await lease.notes().catch(() => ''), await lease.userNote(serials).catch(() => '')].filter(Boolean).join('\n');
       return notes ? { ...result, content: [...result.content, { type: 'text', text: notes }] } : result;
     } finally { await entered.exit().catch(() => undefined); }
   };

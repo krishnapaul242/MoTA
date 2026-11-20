@@ -7,7 +7,11 @@ import { join } from 'node:path';
 export interface Holder { id: string; label: string; pid: number }
 export interface Lease { holder: Holder; claimedAt: number; lastActivity: number; parked?: boolean; parkedAt?: number }
 /** Work that keeps a phone busy whoever holds it: a test run, a long tool call. */
-export interface BusyOp { id: string; serial: string; what: string; pid: number; holderId?: string; holderLabel?: string; startedAt: number }
+export interface BusyOp {
+  id: string; serial: string; what: string; pid: number; holderId?: string; holderLabel?: string; startedAt: number;
+  /** For work found outside MoTA: the processes it runs under, so it counts as the work of a session that is one of them. */
+  ancestors?: number[];
+}
 export interface Notice { serial: string; by: string; at: number; kind?: 'idle' | 'takeover' }
 /** A session waiting for a phone. `at` is when it joined, or was put back after losing the phone. */
 export interface QueueEntry { holder: Holder; at: number }
@@ -25,6 +29,8 @@ export interface LeaseFile {
   takeovers: Takeover[];
   /** When each phone last stopped being held or busy. */
   freedAt: Record<string, number>;
+  /** When the user last touched each phone from VS Code (live screen, device page). */
+  user: Record<string, number>;
 }
 
 export type UseState = 'free' | 'active' | 'idle' | 'busy';
@@ -35,6 +41,8 @@ export interface DeviceUse {
   /** While free or idle with a queue: the first in line has the phone to itself until then. */
   reservedUntil?: number;
   takeover?: Takeover;
+  /** When the user last touched it from VS Code, if recently. */
+  userAt?: number;
 }
 
 /** What the window shows the user for a takeover request. */
@@ -59,10 +67,15 @@ export interface LeaseOptions {
   pollMs?: number;
   /** How long a takeover prompt waits for an answer before the phone's state decides it. */
   takeoverMs?: number;
+  /** Finds work MoTA didn't start (Maestro or instrumentation tests run from a terminal). */
+  detect?: (serials: string[]) => Promise<BusyOp[]>;
 }
 type Timeouts = Pick<LeaseOptions, 'idleSeconds' | 'deviceIdleSeconds'>;
 
-const empty = (): LeaseFile => ({ version: 1, leases: {}, busy: [], sessions: {}, notices: {}, queues: {}, takeovers: [], freedAt: {} });
+const empty = (): LeaseFile => ({ version: 1, leases: {}, busy: [], sessions: {}, notices: {}, queues: {}, takeovers: [], freedAt: {}, user: {} });
+/** How long after the user's last input agents are warned that the user is using a phone. */
+export const USER_WINDOW = 30_000;
+const DETECT_TTL = 5_000;
 const NOTICE_TTL = 24 * 3600_000;
 const DECIDED_TTL = 10 * 60_000;
 const LOCK_STALE = 10_000;
@@ -99,7 +112,8 @@ export function useOf(file: LeaseFile, serial: string, now: number, opts: Timeou
     }
   }
   const takeover = file.takeovers.find(t => t.serial === serial && t.status === 'pending' && alive(t.pid));
-  return { serial, state, idleSeconds, ops, queue, ...(reservedUntil ? { reservedUntil } : {}), ...(takeover ? { takeover } : {}), ...(holder ? { holder, lastActivity: lease!.lastActivity } : {}) };
+  const userAt = file.user[serial] && now - file.user[serial] < USER_WINDOW ? file.user[serial] : undefined;
+  return { serial, state, idleSeconds, ops, queue, ...(reservedUntil ? { reservedUntil } : {}), ...(takeover ? { takeover } : {}), ...(userAt ? { userAt } : {}), ...(holder ? { holder, lastActivity: lease!.lastActivity } : {}) };
 }
 
 export function ago(ms: number): string {
@@ -127,7 +141,8 @@ export function describeUse(use: DeviceUse, holderId: string | undefined, now: n
   const since = use.lastActivity ? ago(now - use.lastActivity) : '';
   const place = use.queue.findIndex(e => e.holder.id === holderId);
   const line = use.queue.length ? `; ${use.queue.length} waiting${place >= 0 ? `, you are number ${place + 1}` : ''}` : '';
-  const asked = use.takeover ? `; ${use.takeover.requester.id === holderId ? 'you have' : `${use.takeover.requester.label} has`} asked the user to take it over` : '';
+  const asked = (use.takeover ? `; ${use.takeover.requester.id === holderId ? 'you have' : `${use.takeover.requester.label} has`} asked the user to take it over` : '')
+    + (use.userAt ? `; the user is using it in VS Code (last input ${ago(now - use.userAt)} ago)` : '');
   switch (use.state) {
     case 'free': return (use.queue.length && use.queue[0].holder.id !== holderId ? `free, but kept for ${use.queue[0].holder.label} for now` : 'free') + line + asked;
     case 'busy': return `busy: ${opText(use.ops[0], now)}` + line + asked;
@@ -146,6 +161,9 @@ export class LeaseStore {
   private readonly alive: (pid: number) => boolean;
   /** Takeover requests this window is settling. */
   private settling = new Set<string>();
+  /** Work found outside MoTA, per phone, with when it was looked for. Not written to the file: each window looks for itself. */
+  private external = new Map<string, { at: number; ops: BusyOp[] }>();
+  private userWrites = new Map<string, number>();
 
   constructor(readonly opts: LeaseOptions) {
     const dir = opts.dir ?? join(homedir(), '.mota');
@@ -160,21 +178,62 @@ export class LeaseStore {
       if (data?.version !== 1) return empty();
       const e = empty();
       return { ...e, ...data, busy: Array.isArray(data.busy) ? data.busy : [], takeovers: Array.isArray(data.takeovers) ? data.takeovers : [],
-        leases: data.leases ?? {}, sessions: data.sessions ?? {}, notices: data.notices ?? {}, queues: data.queues ?? {}, freedAt: data.freedAt ?? {} };
+        leases: data.leases ?? {}, sessions: data.sessions ?? {}, notices: data.notices ?? {}, queues: data.queues ?? {}, freedAt: data.freedAt ?? {}, user: data.user ?? {} };
     } catch { return empty(); }
   }
 
-  private useIn(file: LeaseFile, serial: string) { return useOf(file, serial, this.now(), this.opts, this.alive); }
+  /** `caller`: the session asking, so work it started itself (under its process) counts as its own even before it holds anything. */
+  private useIn(file: LeaseFile, serial: string, caller?: Holder) {
+    const found = this.external.get(serial);
+    let seen = found && Date.now() - found.at < DETECT_TTL * 3 ? found.ops : [];
+    if (!seen.length) return useOf(file, serial, this.now(), this.opts, this.alive);
+    // Work a session started itself (found by its process) is that session's own: it doesn't keep that session off the phone.
+    const sessions = [...(caller ? [caller] : []), ...Object.values(file.leases).map(l => l.holder), ...Object.values(file.queues).flat().map(e => e.holder)];
+    seen = seen.map(o => { const h = o.ancestors && sessions.find(x => o.ancestors!.includes(x.pid)); return h ? { ...o, holderId: h.id, holderLabel: h.label } : o; });
+    return useOf({ ...file, busy: [...file.busy, ...seen] }, serial, this.now(), this.opts, this.alive);
+  }
 
-  async use(serials: string[]): Promise<Map<string, DeviceUse>> {
+  /** Looks for tests MoTA didn't start on these phones, at most every few seconds per phone. */
+  async detect(serials: string[]): Promise<void> {
+    if (!this.opts.detect) return;
+    const stale = serials.filter(s => Date.now() - (this.external.get(s)?.at ?? 0) >= DETECT_TTL);
+    if (!stale.length) return;
+    const ops = await this.opts.detect(stale).catch(() => [] as BusyOp[]);
+    const at = Date.now();
+    for (const s of stale) {
+      // Keep when each piece of work was first seen, so "started … ago" stays true across looks.
+      const before = new Map((this.external.get(s)?.ops ?? []).map(o => [o.id, o.startedAt]));
+      this.external.set(s, { at, ops: ops.filter(o => o.serial === s).map(o => ({ ...o, startedAt: before.get(o.id) ?? o.startedAt })) });
+    }
+  }
+
+  /** `fresh` also looks for tests MoTA didn't start (slower: runs adb). */
+  async use(serials: string[], fresh = false, caller?: Holder): Promise<Map<string, DeviceUse>> {
+    if (fresh) await this.detect(serials);
     const file = await this.read();
-    return new Map(serials.map(s => [s, this.useIn(file, s)]));
+    return new Map(serials.map(s => [s, this.useIn(file, s, caller)]));
+  }
+
+  /** The user touched a phone from VS Code. Agents are warned, not stopped. Written at most every 2 s per phone. */
+  noteUser(serial: string): void {
+    const now = this.now();
+    if (now - (this.userWrites.get(serial) ?? 0) < 2000) return;
+    this.userWrites.set(serial, now);
+    void this.update(file => { file.user[serial] = now; }).catch(() => undefined);
+  }
+
+  /** A warning for an agent about phones the user is using in VS Code, or ''. */
+  async userNote(serials: string[]): Promise<string> {
+    const file = await this.read(), now = this.now();
+    return serials.filter(s => file.user[s] && now - file.user[s] < USER_WINDOW)
+      .map(s => `Note: the user is using ${s} in VS Code right now (last input ${ago(now - file.user[s])} ago). Avoid it or ask them before going on.`).join('\n');
   }
 
   /** Why the holder can't use these phones now, or undefined. Changes nothing. */
   async check(holder: Holder, serials: string[]): Promise<string | undefined> {
+    await this.detect(serials);
     const file = await this.read(), now = this.now();
-    const reasons = serials.map(s => blockedReason(this.useIn(file, s), holder.id, now)).filter(Boolean);
+    const reasons = serials.map(s => blockedReason(this.useIn(file, s, holder), holder.id, now)).filter(Boolean);
     return reasons.length ? reasons.join('\n') : undefined;
   }
 
@@ -196,10 +255,11 @@ export class LeaseStore {
    * Gives the holder all of these phones, or none. Free and idle phones are taken at once (an idle holder is told on its next call
    * and put first in line); phones in active use, busy with others' work, or kept for whoever is first in line are refused.
    */
-  claim(holder: Holder, serials: string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
+  async claim(holder: Holder, serials: string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
+    await this.detect(serials);
     return this.update(file => {
       const now = this.now();
-      const reasons = serials.map(s => blockedReason(this.useIn(file, s), holder.id, now)).filter(Boolean);
+      const reasons = serials.map(s => blockedReason(this.useIn(file, s, holder), holder.id, now)).filter(Boolean);
       if (reasons.length) return { ok: false, reason: reasons.join('\n') };
       for (const serial of serials) this.give(file, serial, holder, 'idle');
       return { ok: true };
@@ -306,7 +366,7 @@ export class LeaseStore {
         const result = await this.update(file => {
           const t = file.takeovers.find(x => x.id === request.id);
           if (!t || t.status !== 'pending') return 'gone';
-          const now = this.now(), u = this.useIn(file, t.serial);
+          const now = this.now(), u = this.useIn(file, t.serial, t.requester);
           const free = !blockedReason(u, t.requester.id, now, true);
           const decide = (status: 'granted' | 'declined', why: string) => { t.status = status; t.why = why; t.decidedAt = now; if (status === 'granted') this.give(file, t.serial, t.requester, 'takeover'); return status; };
           if (answer === 'allow') return decide('granted', 'the user agreed');
@@ -351,6 +411,7 @@ export class LeaseStore {
     for (const s of Object.keys(file.queues)) { const kept = this.useIn(file, s).queue; if (kept.length) file.queues[s] = kept; else delete file.queues[s]; }
     file.takeovers = file.takeovers.filter(t => this.alive(t.pid) && this.alive(t.requester.pid) && (t.status === 'pending' || now - (t.decidedAt ?? now) < DECIDED_TTL));
     for (const [s, at] of Object.entries(file.freedAt)) if (now - at > NOTICE_TTL) delete file.freedAt[s];
+    for (const [s, at] of Object.entries(file.user)) if (now - at > USER_WINDOW) delete file.user[s];
   }
 
   private async lock(): Promise<() => Promise<void>> {
@@ -385,6 +446,8 @@ export interface LeaseGate {
   enter(serials: string[], what: string): Promise<{ refused: string } | { exit: () => Promise<void> }>;
   /** Notices for the caller (shown once), as text. */
   notes(): Promise<string>;
+  /** A warning when the user is using these phones in VS Code, or ''. */
+  userNote(serials: string[]): Promise<string>;
   describe(serials: string[]): Promise<Map<string, string>>;
   /** Waits in line for a phone, or asks the user to hand it over. Without a serial, takes any free phone from `candidates`. */
   acquire(request: { serial?: string; candidates: string[]; mode: AcquireMode; idleSeconds?: number }): Promise<AcquireResult>;
@@ -451,9 +514,10 @@ export function leaseGate(store: LeaseStore, who: Holder | (() => Promise<Holder
       return { exit: await store.begin(serials, what, h) };
     },
     async notes() { return noticeText(await store.takeNotices((await holder()).id), now()); },
+    userNote: serials => store.userNote(serials),
     async describe(serials) {
       const h = await holder(), t = now();
-      return new Map([...(await store.use(serials))].map(([s, u]) => [s, describeUse(u, h.id, t)]));
+      return new Map([...(await store.use(serials, true, h))].map(([s, u]) => [s, describeUse(u, h.id, t)]));
     },
     async acquire({ serial, candidates, mode, idleSeconds }) {
       const h = await holder();
@@ -475,4 +539,21 @@ export function leaseGate(store: LeaseStore, who: Holder | (() => Promise<Holder
     },
     release: async serials => store.release((await holder()).id, serials),
   };
+}
+
+/** Keeps one busy mark in step with a page's state (a recording, a replay): call set() whenever that state may have changed. */
+export class BusyMark {
+  private key = '';
+  private chain: Promise<(() => Promise<void>) | undefined> = Promise.resolve(undefined);
+  constructor(private store: LeaseStore | undefined) {}
+  set(serial: string | undefined, what = ''): Promise<unknown> {
+    const key = serial ? `${serial}\n${what}` : '';
+    if (!this.store || key === this.key) return this.chain;
+    this.key = key;
+    const store = this.store;
+    return this.chain = this.chain.then(async end => {
+      await end?.().catch(() => undefined);
+      return serial ? store.begin([serial], what).catch(() => undefined) : undefined;
+    });
+  }
 }

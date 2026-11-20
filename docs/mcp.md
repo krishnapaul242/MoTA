@@ -24,7 +24,11 @@ Several Claude Code, Codex or Cursor sessions, and MoTA's own assistant, can use
 - A call that changes a phone (tap, type, install, run a flow…) claims it for that session. Reading a phone (screenshot, UI tree, logs) never claims it.
 - While a session is using a phone, other sessions' calls that change it are refused with the name of the session that has it. `list_devices` shows each phone as free, yours, in use by someone else, idle or busy.
 - A phone becomes **idle** after `mota.lease.idleSeconds` (120 s by default) without activity, for example while the session builds an APK or waits for your answer. Another session can then take it at once; the first session is told on its next call.
-- A phone running a Maestro test is **busy**, never idle, whoever started the test.
+- A phone is **busy**, never idle, while it runs:
+    - a Maestro test or flow check started from MoTA, or a MoTA recording or replay;
+    - a Maestro command started outside MoTA, for example from a terminal or a session's shell. MoTA finds it on this computer and reads which phone it targets. A command a session started itself doesn't keep that session off its own phone;
+    - an instrumentation test such as Espresso or `connectedAndroidTest`, which MoTA finds on the phone.
+- When you use a phone yourself in VS Code (live screen, device page), agents are not stopped, but they get a warning that you are using it.
 - When a session ends or crashes, its phones are free straight away. When MoTA's assistant finishes a reply, its phones become idle.
 - A session that needs a phone someone else is using calls `acquire_device`:
     - **wait** puts it in line. When the phone becomes free or idle, the first in line gets it; the phone is kept for that session for one idle period, then the next in line gets its turn.

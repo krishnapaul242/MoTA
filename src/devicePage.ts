@@ -16,6 +16,10 @@ import { captureScreenshot, copyPngToClipboard, deepLinkArgs, deviceAdbArgs, she
 import { validPackage } from './apk';
 import { launchApp } from './deviceActions';
 import { gestureParams, InputRouter } from './helperInput';
+import { sharedLeases } from './ai/host';
+
+/** Page actions that are the user driving the phone; agents get a warning while they happen. */
+export const USER_INPUT = new Set(['touch', 'scroll', 'gesture', 'key', 'text', 'tap', 'swipe', 'app-launch', 'app-stop', 'deep-link', 'launch']);
 
 export const devicePresets: Record<string,{label:string;args:string[]}> = {
   home:{label:'Home',args:['input','keyevent','KEYCODE_HOME']},back:{label:'Back',args:['input','keyevent','KEYCODE_BACK']},recents:{label:'Recents',args:['input','keyevent','KEYCODE_APP_SWITCH']},
@@ -64,6 +68,7 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
       if(this.closing)return;
       if(isAiMessage(m)){await this.ai.handle(m);return;}
       if(!m||typeof m.action!=='string')return;
+      if(USER_INPUT.has(m.action))sharedLeases(context,adb)?.noteUser(this.device.serial);
       try{if(await this.quick(m))return;}catch(e){this.fail(m.action,e);return;}
       if(m.action==='ready'){this.state();return;}
       if(m.action==='client-error'){this.fail('media preview / clipboard',String(m.message||'Preview failed').slice(0,4000));return;}
