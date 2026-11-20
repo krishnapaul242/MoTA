@@ -10,7 +10,7 @@ const {clientConfigs} = require('../out/mcpSetup');
 
 const TOKEN = 'secret-token-123';
 
-async function start({confirm = async () => true} = {}) {
+async function start({confirm = async () => true, leases} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mota-mcp-'));
   const flows = join(root, '.maestro');
   await mkdir(flows);
@@ -23,7 +23,7 @@ async function start({confirm = async () => true} = {}) {
   const server = new McpHttpServer({
     adb, input: {send: async () => undefined}, runner: {running: () => [], latest: () => undefined},
     flowsFolder: () => flows, workspaceRoot: () => root, screenshotSide: () => 960,
-    onFlowWritten() {}, token: () => TOKEN, log: l => lines.push(l),
+    onFlowWritten() {}, token: () => TOKEN, log: l => lines.push(l), leases,
     confirm: async (tool, summary) => { asked.push(summary); return confirm(tool); },
   }, '9.9.9');
   const port = await server.start(0);
@@ -118,4 +118,32 @@ test('client configs carry the URL and token', () => {
   assert.match(c.claudeCommand, /mota http:\/\/127\.0\.0\.1:6682\/mcp --header "Authorization: Bearer T"$/);
   assert.deepEqual(JSON.parse(c.cursor), {mcpServers: {mota: {url: 'http://127.0.0.1:6682/mcp', headers: {Authorization: 'Bearer T'}}}});
   assert.match(c.codex, /\[mcp_servers\.mota\]\nurl = "http:\/\/127\.0\.0\.1:6682\/mcp"/);
+});
+
+test('phones in use by another session are refused, and list_devices says who has them', async () => {
+  const {LeaseStore} = require('../out/leases');
+  const leases = new LeaseStore({dir: await mkdtemp(join(tmpdir(), 'mota-mcp-leases-')), idleSeconds: () => 120, deviceIdleSeconds: () => ({})});
+  // A session in another process (our parent, which is alive) holds the phone.
+  await leases.claim({id: `agent:${process.ppid}`, label: 'codex · ~/other', pid: process.ppid}, ['emulator-5554']);
+  let asked = 0;
+  const s = await start({leases, confirm: async () => { asked++; return true; }});
+  try {
+    const client = await connect(s.url);
+    const list = await client.callTool({name: 'list_devices', arguments: {}});
+    assert.match(list.content[0].text, /emulator-5554 · Pixel 9 · device · in use by codex · ~\/other/);
+    const tap = await client.callTool({name: 'tap', arguments: {serial: 'emulator-5554', x: 1, y: 2}});
+    assert.ok(tap.isError);
+    assert.match(tap.content[0].text, /in use by codex · ~\/other/);
+    const clear = await client.callTool({name: 'clear_app_data', arguments: {serial: 'emulator-5554', package: 'com.example.app'}});
+    assert.ok(clear.isError);
+    assert.equal(asked, 0, 'the user is not asked about a call that would be refused');
+    assert.ok(!s.shells.some(c => /pm clear/.test(c)));
+    // Once the other session lets go, the phone is this caller's.
+    await leases.release(`agent:${process.ppid}`);
+    const ok = await client.callTool({name: 'wake', arguments: {serial: 'emulator-5554'}});
+    assert.ok(!ok.isError, ok.content[0].text);
+    const after = await client.callTool({name: 'list_devices', arguments: {}});
+    assert.match(after.content[0].text, /· yours/);
+    await client.close();
+  } finally { await s.server.stop(); }
 });

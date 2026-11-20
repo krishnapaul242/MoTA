@@ -14,6 +14,8 @@ import { liveEngine, LiveMirror, liveTouch } from './liveMirror';
 import { HelperClient, HELPER_PACKAGE } from './helperClient';
 import { gestureParams, InputRouter } from './helperInput';
 import { AdbConsole } from './adbConsole';
+import { aiHost as sharedHost } from './ai/host';
+import { ago, type DeviceUse } from './leases';
 import { HelperDownloadServer, lanAddresses, parseDeviceOwner, provisioningPayload, readHelperMetadata } from './provisioning';
 
 export interface FarmInfo { manufacturer: string; android: string; sdk: string; width: number | null; height: number | null; battery: number | null; charging: boolean; managed: boolean }
@@ -79,6 +81,16 @@ export async function applyFarmDefaults(adb: Adb, serial: string) {
 const KEYS = ['back', 'home', 'recents', 'volumeUp', 'volumeDown', 'wake', 'sleep'];
 const THUMBNAIL_MS = 5000, LIST_MS = 3000, INFO_MS = 60000;
 
+/** What the farm shows about who uses a phone, or undefined when it is free. */
+export function farmUse(use: DeviceUse | undefined, now: number): { state: 'active' | 'idle' | 'busy'; text: string; title: string } | undefined {
+  if (!use || use.state === 'free') return undefined;
+  if (use.state === 'busy') { const o = use.ops[0]; return { state: 'busy', text: 'Busy', title: `${o.what}${o.holderLabel ? ` for ${o.holderLabel}` : ''}, for ${ago(now - o.startedAt)}` }; }
+  const who = use.holder!.label, since = ago(now - (use.lastActivity ?? now));
+  return use.state === 'active'
+    ? { state: 'active', text: who, title: `In use by ${who}; last action ${since} ago. Free to others after ${use.idleSeconds} s without activity.` }
+    : { state: 'idle', text: `${who} · idle ${since}`, title: `Last used by ${who} ${since} ago. Other sessions may take it.` };
+}
+
 export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.ExtensionContext, adb: Adb, refreshTree: () => Promise<void>) {
   let current: Farm | undefined;
   context.subscriptions.push(
@@ -137,7 +149,8 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         await Promise.all(found.filter(d => d.state === 'device' && now - (this.info.get(d.serial)?.at || 0) > INFO_MS).map(async d => {
           try { this.info.set(d.serial, { at: now, value: parseFarmInfo(await adb.shell(d.serial, [FARM_INFO_SCRIPT])) }); } catch { /* shown without details */ }
         }));
-        this.post({ kind: 'devices', devices: all.map(d => ({ ...d, kind: connectionKind(d.serial), info: this.info.get(d.serial)?.value })) });
+        const uses = await sharedHost(context, adb).leases?.use(found.map(d => d.serial)).catch(() => undefined);
+        this.post({ kind: 'devices', devices: all.map(d => ({ ...d, kind: connectionKind(d.serial), info: this.info.get(d.serial)?.value, use: uses && farmUse(uses.get(d.serial), now) })) });
       } catch (e) {
         this.post({ kind: 'devices', devices: [], error: e instanceof Error ? e.message : String(e) });
       } finally { this.listing = false; this.lastList = Date.now(); }

@@ -7,6 +7,7 @@ import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import type * as VSCode from 'vscode';
 import type { Adb } from '../adb';
 import { InputRouter } from '../helperInput';
+import { leaseGate, LeaseStore, type Holder } from '../leases';
 import { discoverFlows, filterByTags } from '../maestro/flows';
 import { MaestroRunner, resolveMaestro } from '../maestro/runner';
 import { BUILTIN_TOOLS, decide, targetSerials, type PolicyContext } from './policy';
@@ -19,7 +20,7 @@ import { backupFlow, motaServer } from './tools';
 
 export type Post = (message: HostToWebview) => unknown;
 export interface Link { handle(message: unknown): Promise<void>; dispose(): void }
-export interface AiHost { connect(post: Post): Link; readonly runner: MaestroRunner; readonly input: InputRouter; dispose(): void }
+export interface AiHost { connect(post: Post): Link; readonly runner: MaestroRunner; readonly input: InputRouter; readonly leases?: LeaseStore; dispose(): void }
 
 export interface HostDeps {
   adb: Adb;
@@ -38,6 +39,8 @@ export interface HostDeps {
   apiKey?: () => Promise<string | undefined>;
   /** Identifies the extension in Claude Code's User-Agent, e.g. mota-android/0.7.4. */
   clientApp?: string;
+  /** Phone leases shared with outside agents and other windows. */
+  leases?: LeaseStore;
 }
 
 export interface StoredConversation extends ConversationSummary { sdkSessionId?: string; model: string; permission: Permission; scope: string[]; tokenCap: number }
@@ -129,10 +132,14 @@ export class AiHostImpl implements AiHost {
   private modelsLoaded = false;
   private lastShot = new Map<string, string>();
   readonly input: InputRouter;
+  readonly leases?: LeaseStore;
 
   constructor(private deps: HostDeps) {
     this.input = deps.input ?? new InputRouter(deps.adb);
-    this.runner = new MaestroRunner({ adb: deps.adb, maestro: () => resolveMaestro(deps.maestroPath()), flowsFolder: deps.flowsFolder, runsFolder: deps.runsFolder, emit: e => this.broadcast(e) });
+    this.leases = deps.leases;
+    const leases = deps.leases;
+    this.runner = new MaestroRunner({ adb: deps.adb, maestro: () => resolveMaestro(deps.maestroPath()), flowsFolder: deps.flowsFolder, runsFolder: deps.runsFolder, emit: e => this.broadcast(e),
+      ...(leases ? { busy: (serial: string, what: string) => leases.begin([serial], what) } : {}) });
     for (const c of deps.store.get()) this.convs.set(c.convId, { ...c, allowed: new Set(), planForConversation: false, pending: new Map() });
   }
 
@@ -264,6 +271,7 @@ export class AiHostImpl implements AiHost {
       const ready = await this.deps.adb.devices().catch(() => []);
       const workspaceRoot = this.deps.workspaceRoot(), flowsFolder = this.deps.flowsFolder();
       const server = motaServer(sdk, {
+        ...(this.deps.leases ? { lease: leaseGate(this.deps.leases, conversationHolder(conv)) } : {}),
         adb: this.deps.adb, input: this.input, runner: this.runner, flowsFolder: this.deps.flowsFolder, workspaceRoot: this.deps.workspaceRoot, screenshotSide: this.deps.screenshotSide,
         requestPlan: plan => this.requestPlan(conv, turn, plan),
         onScreenshot: (serial, file) => this.lastShot.set(serial, file),
@@ -300,6 +308,8 @@ export class AiHostImpl implements AiHost {
     } finally {
       for (const resolveApproval of conv.pending.values()) resolveApproval('deny');
       conv.pending.clear();
+      // The turn ended (done, stopped or waiting for the user), so its phones are free to others now.
+      await this.deps.leases?.park(conversationHolder(conv).id).catch(() => undefined);
       if (turn.textOpen && turn.messageId) this.broadcast({ type: 'ai/text-end', convId, messageId: turn.messageId });
       const tokens = taskTokens(turn.usage);
       conv.totalTokens += tokens.totalTokens;
@@ -409,6 +419,11 @@ export class AiHostImpl implements AiHost {
   }
 }
 
+/** A MoTA assistant conversation as a phone holder. Its phones are tied to this window's process. */
+export function conversationHolder(conv: { convId: string; title: string }, pid = process.pid): Holder {
+  return { id: `chat:${pid}:${conv.convId}`, label: `MoTA's assistant ("${conv.title.length > 40 ? conv.title.slice(0, 39) + '…' : conv.title}")`, pid };
+}
+
 let instance: AiHostImpl | undefined;
 
 /** The extension's single AI and test host. Pages connect to it; conversations and runs outlive any one page. */
@@ -431,6 +446,10 @@ export function aiHost(context: VSCode.ExtensionContext, adb: Adb): AiHost {
     loadSdk,
     apiKey: () => Promise.resolve(context.secrets.get(API_KEY_SECRET)),
     clientApp: `mota-android/${String(context.extension?.packageJSON?.version ?? 'dev')}`,
+    leases: new LeaseStore({
+      idleSeconds: () => config().get<number>('lease.idleSeconds', 120),
+      deviceIdleSeconds: () => config().get<Record<string, number>>('lease.deviceIdleSeconds', {}),
+    }),
   });
   const created = instance;
   context.subscriptions.push({ dispose: () => { created.dispose(); if (instance === created) instance = undefined; } });

@@ -11,6 +11,8 @@
 | `mota.maestroFlowsFolder` | `.maestro` | Folder with your Maestro flows, relative to the first workspace folder or absolute. |
 | `mota.mcp.enabled` | `false` | Serve MoTA's tools to AI agents over MCP on 127.0.0.1. |
 | `mota.mcp.port` | `6682` | Local port for MoTA's MCP server (`http://127.0.0.1:<port>/mcp`). |
+| `mota.lease.idleSeconds` | `120` | Seconds without activity after which a phone a session holds counts as idle, so another session may take it. A phone running a Maestro test is never idle. See [Sharing phones](mcp.md#sharing-phones-between-sessions). |
+| `mota.lease.deviceIdleSeconds` | `{}` | Idle time per phone, by serial, overriding `mota.lease.idleSeconds`, e.g. `{ "emulator-5554": 300 }`. |
 | `mota.ai.claudePath` | *(empty)* | Claude Code CLI the assistant runs on. Empty finds `claude` in `~/.local/bin`, `~/.claude/local` or on PATH. |
 | `mota.ai.model` | *(empty)* | Model for the assistant. Empty uses Claude Code's default model. |
 | `mota.ai.effort` | `medium` | How hard Claude thinks: `low`, `medium`, `high` or `xhigh`. Higher is slower and uses more tokens. |

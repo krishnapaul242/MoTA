@@ -5,7 +5,9 @@ import type { AddressInfo } from 'node:net';
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { riskOf } from './policy';
+import { leaseGate, type LeaseGate, type LeaseStore } from '../leases';
+import { callerOfSocket } from './caller';
+import { riskOf, targetSerials } from './policy';
 import { describeCall } from './prompts';
 import { motaTools, type ToolDeps } from './tools';
 
@@ -17,9 +19,12 @@ const NOT_SERVED = new Set(['propose_plan']);
 const INSTRUCTIONS = `MoTA controls the Android phones connected to the user's computer and runs Maestro tests on them.
 Start with list_devices and use the serials it returns. Prefer ui_tree over screenshots for finding what to tap: it is cheaper and gives exact tap centres in device pixels.
 Maestro flows live in the workspace flows folder; write_flow can only write there. run_flow takes about 40 s of Maestro start-up before the flow runs.
-Calls that delete data (clear_app_data, uninstall_app, overwriting a flow) wait for the user to approve them in VS Code.`;
+Calls that delete data (clear_app_data, uninstall_app, overwriting a flow) wait for the user to approve them in VS Code.
+Other sessions and agents share these phones. list_devices shows who is using each one. A call that changes a phone claims it for you; it is refused while someone else is using that phone or a test is running on it. Phones you stop using become free to others after a while.`;
 
-export interface McpDeps extends Omit<ToolDeps, 'requestPlan' | 'onScreenshot'> {
+export interface McpDeps extends Omit<ToolDeps, 'requestPlan' | 'onScreenshot' | 'lease'> {
+  /** Phone leases shared with other sessions and windows; without it, any caller may use any phone. */
+  leases?: LeaseStore;
   /** The bearer token clients must send. */
   token: () => string;
   /** Asks the user in VS Code before a call that deletes data; true lets it run. */
@@ -33,9 +38,9 @@ const defineTool = ((name: string, description: string, inputSchema: unknown, ha
   ({ name, description, inputSchema, handler, ...(extras?.annotations ? { annotations: extras.annotations } : {}) })) as unknown as typeof Sdk.tool;
 
 /** An MCP server with MoTA's tools for outside agents (Claude Code, Cursor, Codex…). Data-loss calls need the user's approval. */
-export function buildMcpServer(deps: McpDeps, version: string): McpServer {
+export function buildMcpServer(deps: McpDeps, version: string, lease?: LeaseGate): McpServer {
   const server = new McpServer({ name: 'mota', version }, { instructions: INSTRUCTIONS });
-  const defs = motaTools(defineTool, { ...deps, requestPlan: async () => true, onScreenshot: () => undefined });
+  const defs = motaTools(defineTool, { ...deps, lease, requestPlan: async () => true, onScreenshot: () => undefined });
   for (const def of defs) {
     if (NOT_SERVED.has(def.name)) continue;
     const handler = def.handler as (args: Record<string, unknown>, extra: unknown) => Promise<{ isError?: boolean }>;
@@ -43,13 +48,17 @@ export function buildMcpServer(deps: McpDeps, version: string): McpServer {
       (async (args: Record<string, unknown>, extra: unknown) => {
         const summary = describeCall(def.name, args);
         const risk = riskOf(`mcp__mota__${def.name}`, args, { workspaceRoot: deps.workspaceRoot(), flowsFolder: deps.flowsFolder(), exists: existsSync });
+        const who = lease ? ` (${(await lease.holder()).label})` : '';
+        // Don't ask the user about a call the lease would refuse anyway.
+        const blocked = risk === 'data-loss' && lease ? await lease.check(targetSerials(args)) : undefined;
+        if (blocked) { deps.log(`${summary}${who} — refused, phone in use`); return { content: [{ type: 'text', text: blocked }], isError: true }; }
         if (risk === 'data-loss' && !(await deps.confirm(def.name, summary, args))) {
           deps.log(`${summary} — declined`);
           return { content: [{ type: 'text', text: 'The user declined this in VS Code. Do not retry it; ask them what they want instead.' }], isError: true };
         }
         const started = Date.now();
         const result = await handler(args, extra);
-        deps.log(`${summary}${'serial' in args ? ` on ${args.serial}` : ''} — ${result?.isError ? 'error' : 'ok'} in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+        deps.log(`${summary}${'serial' in args ? ` on ${args.serial}` : ''}${who} — ${result?.isError ? 'error' : 'ok'} in ${((Date.now() - started) / 1000).toFixed(1)} s`);
         return result;
       }) as never);
   }
@@ -106,7 +115,8 @@ export class McpHttpServer {
     if (req.headers.origin) return reply(res, 403, 'Requests from web pages are not allowed.');
     if (!validBearer(req.headers.authorization, this.deps.token())) return reply(res, 401, 'Missing or wrong MoTA access token. Run "MoTA: Connect AI Agents (MCP)" in VS Code to get it.');
     if (req.method !== 'POST') return reply(res, 405, 'This server is stateless; send JSON-RPC with POST.');
-    const server = buildMcpServer(this.deps, this.version);
+    const lease = this.deps.leases ? leaseGate(this.deps.leases, () => callerOfSocket(req.socket)) : undefined;
+    const server = buildMcpServer(this.deps, this.version, lease);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { void transport.close(); void server.close(); });
     await server.connect(transport as never);

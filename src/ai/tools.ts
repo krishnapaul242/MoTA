@@ -9,6 +9,8 @@ import type { InputRouter } from '../helperInput';
 import { discoverFlows, parseFlowHeader } from '../maestro/flows';
 import { describeCommand, latestFlowDir } from '../maestro/results';
 import { MAESTRO_DRIVER, type MaestroRunner, type TestRun } from '../maestro/runner';
+import type { LeaseGate } from '../leases';
+import { MOTA_TOOL_RISK, targetSerials } from './policy';
 import { downscalePng } from './png';
 
 type Result = { content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[]; isError?: boolean };
@@ -30,6 +32,8 @@ export interface ToolDeps {
   onScreenshot: (serial: string, file: string) => void;
   /** A flow was written; `before` is the previous content, if any. */
   onFlowWritten: (file: string, before: string | undefined) => void;
+  /** Phone leases for this caller. Calls that change a phone claim it for the caller and are refused while someone else uses it. */
+  lease?: LeaseGate;
 }
 
 const serial = z.string().regex(/^[\w.:@-]{1,128}$/, 'Use a serial from list_devices.');
@@ -110,9 +114,12 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
   };
 
   const tools = [
-    tool('list_devices', 'List connected Android devices with serial, model and state. Only "device" state is usable.', {}, safely(async () => {
+    tool('list_devices', 'List connected Android devices with serial, model, state and who is using each. Only "device" state is usable. Other sessions and agents share these phones: prefer free ones, and leave phones in use by someone else alone.', {}, safely(async () => {
       const list = await adb.devices();
-      return text(list.length ? list.map(d => `${d.serial} · ${d.model} · ${d.state}`).join('\n') : 'No devices connected.');
+      const uses = await deps.lease?.describe(list.map(d => d.serial));
+      const notes = await deps.lease?.notes();
+      const lines = list.map(d => `${d.serial} · ${d.model} · ${d.state}${uses?.get(d.serial) ? ` · ${uses.get(d.serial)}` : ''}`);
+      return text([notes, lines.length ? lines.join('\n') : 'No devices connected.'].filter(Boolean).join('\n\n'));
     }), read),
 
     tool('device_info', 'Android version, maker, screen size, battery and the app in the foreground.', { serial }, safely(async ({ serial: s }) => {
@@ -244,7 +251,27 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
     tool('clear_app_data', 'Delete all data of an app on a device (logs the user out, resets it).', { serial, package: pkg }, safely(async ({ serial: s, package: p }) => text(await adb.shell(s, ['pm', 'clear', p]))), destructive),
     tool('uninstall_app', 'Uninstall an app from a device, deleting its data.', { serial, package: pkg }, safely(async ({ serial: s, package: p }) => text(await adb.run(['-s', s, 'uninstall', p]))), destructive),
   ];
-  return tools;
+  return deps.lease ? tools.map(def => withLease(def, deps.lease!)) : tools;
+}
+
+/** Wraps a tool that changes phones so it claims them for the call, or is refused while someone else uses them. */
+function withLease<T>(def: T, lease: LeaseGate): T {
+  const d = def as unknown as { name: string; handler: (args: Record<string, unknown>, extra: unknown) => Promise<Result> };
+  const risk = MOTA_TOOL_RISK[d.name];
+  if (!risk || risk === 'read') return def;
+  const handler = async (args: Record<string, unknown>, extra: unknown): Promise<Result> => {
+    const serials = targetSerials(args);
+    if (!serials.length) return d.handler(args, extra);
+    let entered: Awaited<ReturnType<LeaseGate['enter']>>;
+    try { entered = await lease.enter(serials, d.name); } catch (e) { return text(e instanceof Error ? e.message : String(e), true); }
+    if ('refused' in entered) return text(entered.refused, true);
+    try {
+      const result = await d.handler(args, extra);
+      const notes = await lease.notes().catch(() => '');
+      return notes ? { ...result, content: [...result.content, { type: 'text', text: notes }] } : result;
+    } finally { await entered.exit().catch(() => undefined); }
+  };
+  return { ...d, handler } as unknown as T;
 }
 
 /** MoTA's tools, served to Claude as the in-process MCP server "mota". */

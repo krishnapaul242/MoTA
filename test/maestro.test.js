@@ -124,7 +124,9 @@ test('runs selected flows on every selected device and reconciles with JUnit', a
     ? {lines: ['Waiting for flows to complete...', '[Passed] login (4s)', '[Failed] pay (1s) (Element not found)'], xml: ok, code: 1}
     : (online = ['A'], {lines: ['Waiting for flows to complete...', '[Passed] login (5s)'], xml: '', code: 1}));
   const events = [];
-  const runner = new MaestroRunner({adb, maestro: () => '/bin/maestro', flowsFolder: () => flowsDir, runsFolder: () => runsDir, emit: e => events.push(e), spawn});
+  const busy = [];
+  const markBusy = async (serial, what) => { busy.push(`+${serial} ${what}`); return async () => { busy.push(`-${serial}`); }; };
+  const runner = new MaestroRunner({adb, maestro: () => '/bin/maestro', flowsFolder: () => flowsDir, runsFolder: () => runsDir, emit: e => events.push(e), spawn, busy: markBusy});
   const flows = [{path: 'login.yaml', name: 'login', tags: []}, {path: 'pay.yaml', name: 'pay', tags: []}];
   const run = await runner.start({flows, serials: ['A', 'B'], env: {USER: 'qa'}, clearData: 'com.shop'});
   await run.done;
@@ -149,6 +151,8 @@ test('runs selected flows on every selected device and reconciles with JUnit', a
   assert.ok(events.some(e => e.type === 'test/progress' && e.serial === 'A' && e.state === 'running'));
   const saved = JSON.parse(await readFile(join(run.dir, 'run.json'), 'utf8'));
   assert.deepEqual(saved.devices.map(d => d.state), ['done', 'lost']);
+  assert.deepEqual(busy.filter(b => b.startsWith('+')).sort(), [`+A a Maestro test run (${run.runId})`, `+B a Maestro test run (${run.runId})`], 'each phone is busy for other sessions while it runs');
+  assert.deepEqual(busy.filter(b => b.startsWith('-')).sort(), ['-A', '-B'], 'and free again when it ends');
 });
 
 test('refuses devices that are not ready and flows outside the folder', async () => {

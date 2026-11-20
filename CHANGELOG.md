@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- Phones are shared safely between AI sessions: a session that changes a phone claims it, other sessions are refused while it is in use or running a test, and idle phones (120 s by default, `mota.lease.idleSeconds`) are handed over at once. `list_devices` and the farm show who uses each phone. Works across VS Code windows.
+
 ## 0.7.4
 - Claude features can use an Anthropic API key: run **MoTA: Set Anthropic API Key**. The key is kept in VS Code's secret storage. Without a key, Claude Code's own sign-in is used.
 - New extension icon.

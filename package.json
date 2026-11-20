@@ -354,6 +354,23 @@
           "minimum": 480,
           "maximum": 1600,
           "description": "Longest side, in pixels, of screenshots sent to Claude. Smaller uses fewer tokens."
+        },
+        "mota.lease.idleSeconds": {
+          "type": "number",
+          "default": 120,
+          "minimum": 10,
+          "maximum": 86400,
+          "description": "Seconds without activity after which a phone an agent or MoTA's assistant holds counts as idle, and another session may take it at once. A phone running a Maestro test is never idle. A session's own setting comes first, then mota.lease.deviceIdleSeconds."
+        },
+        "mota.lease.deviceIdleSeconds": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 10,
+            "maximum": 86400
+          },
+          "markdownDescription": "Idle time per phone, by serial, overriding `mota.lease.idleSeconds`. For example `{ \"emulator-5554\": 300 }`."
         }
       }
     }

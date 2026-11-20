@@ -21,7 +21,7 @@ export interface StartRequest {
 }
 
 export interface FlowOutcome { flow: string; status: FlowStatus; durationMs: number; failure?: FlowFailure }
-export interface DeviceRun { serial: string; state: DeviceRunState; startedAt: number; endedAt?: number; dir: string; results: Map<string, FlowOutcome>; message?: string; child?: ChildProcess; cancelled?: boolean }
+export interface DeviceRun { serial: string; state: DeviceRunState; startedAt: number; endedAt?: number; dir: string; results: Map<string, FlowOutcome>; message?: string; child?: ChildProcess; cancelled?: boolean; release?: () => Promise<void> }
 export interface TestRun { runId: string; dir: string; flows: FlowInfo[]; devices: Map<string, DeviceRun>; models: Record<string, string>; startedAt: number; done: Promise<void>; silent: boolean; emit: (event: TestEvent) => void }
 
 /** Maestro's on-device driver app. It stays running after a run and holds UI automation. */
@@ -62,6 +62,8 @@ export class MaestroRunner {
     emit: (event: TestEvent) => void;
     spawn?: Spawn;
     now?: () => number;
+    /** Marks a phone busy (for other sessions and windows) until the returned function is called. */
+    busy?: (serial: string, what: string) => Promise<() => Promise<void>>;
   }) {}
 
   get(runId: string) { return this.runs.get(runId); }
@@ -120,6 +122,7 @@ export class MaestroRunner {
 
   private async runDevice(run: TestRun, d: DeviceRun, request: StartRequest) {
     const { adb } = this.opts;
+    d.release = await this.opts.busy?.(d.serial, run.silent ? 'a Maestro flow check' : `a Maestro test run (${run.runId})`).catch(() => undefined);
     await fs.mkdir(d.dir, { recursive: true });
     this.progress(run, d);
     await adb.shell(d.serial, ['input', 'keyevent', 'KEYCODE_WAKEUP']).catch(() => undefined);
@@ -187,6 +190,8 @@ export class MaestroRunner {
   private async finishDevice(run: TestRun, d: DeviceRun, state: DeviceRunState, message?: string) {
     const now = this.opts.now ?? Date.now;
     d.state = state; d.message = message; d.endedAt = now();
+    const release = d.release; d.release = undefined;
+    await release?.().catch(() => undefined);
     for (const f of run.flows) if (!d.results.has(f.path)) {
       d.results.set(f.path, { flow: f.path, status: 'not-run', durationMs: 0 });
       run.emit({ type: 'test/flow', runId: run.runId, serial: d.serial, flow: f.path, status: 'not-run', durationMs: 0 });

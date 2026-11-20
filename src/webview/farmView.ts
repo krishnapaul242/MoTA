@@ -202,7 +202,8 @@ function matches(d){const q=$('search').value.trim().toLowerCase();if(filter!=='
 const sub=d=>{const i=d.info||{};return[i.manufacturer,i.android&&'Android '+i.android].filter(Boolean).join(' · ')||(online(d)?'':d.serial);};
 const connChip=d=>'<span class="chip">'+icon(d.kind==='USB'?'usb':d.kind==='Wi-Fi'?'wifi':'phone')+esc(d.kind)+'</span>';
 function batteryChip(d){const i=d.info||{};if(i.battery==null)return'';const low=i.battery<=20&&!i.charging;return'<span class="chip'+(low?' warn':'')+'">'+icon(i.charging?'bolt':'battery')+i.battery+'%'+(i.charging?' · charging':low?' · low':'')+'</span>';}
-function chips(d){const i=d.info||{};return connChip(d)+(online(d)?batteryChip(d)+(i.width?'<span class="chip">'+i.width+' × '+i.height+'</span>':''):'')+(i.managed?'<span class="chip">'+icon('shield')+'Managed</span>':'');}
+const useChip=d=>d.use?'<span class="chip use '+esc(d.use.state)+'" title="'+esc(d.use.title)+'">'+icon(d.use.state==='busy'?'play':'activity')+esc(d.use.text)+'</span>':'';
+function chips(d){const i=d.info||{};return useChip(d)+connChip(d)+(online(d)?batteryChip(d)+(i.width?'<span class="chip">'+i.width+' × '+i.height+'</span>':''):'')+(i.managed?'<span class="chip">'+icon('shield')+'Managed</span>':'');}
 function stageInner(d){
  if(online(d))return frames[d.serial]?'<img src="'+frames[d.serial]+'" alt="Screen of '+esc(d.model)+'">':'<div class="msg">'+icon(frameErrors[d.serial]?'warn':'phone')+'<span>'+esc(frameErrors[d.serial]||($('live').checked?'Loading screen…':'Live screens are off'))+'</span></div>';
  if(d.state==='unauthorized')return'<div class="msg">'+icon('warn','style="color:var(--vscode-editorWarning-foreground)"')+'<b>Waiting for authorization</b><span>Unlock the phone and tap <b>Allow</b> on the USB debugging prompt.</span></div>';
