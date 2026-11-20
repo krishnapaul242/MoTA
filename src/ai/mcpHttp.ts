@@ -20,7 +20,7 @@ const INSTRUCTIONS = `MoTA controls the Android phones connected to the user's c
 Start with list_devices and use the serials it returns. Prefer ui_tree over screenshots for finding what to tap: it is cheaper and gives exact tap centres in device pixels.
 Maestro flows live in the workspace flows folder; write_flow can only write there. run_flow takes about 40 s of Maestro start-up before the flow runs.
 Calls that delete data (clear_app_data, uninstall_app, overwriting a flow) wait for the user to approve them in VS Code.
-Other sessions and agents share these phones. list_devices shows who is using each one. A call that changes a phone claims it for you; it is refused while someone else is using that phone or a test is running on it. Phones you stop using become free to others after a while.`;
+Other sessions and agents share these phones. list_devices shows who is using each one. A call that changes a phone claims it for you; it is refused while someone else is using that phone or a test is running on it. To get such a phone, call acquire_device: mode "wait" waits in line, mode "takeover" asks the user to hand it over. Phones you stop using become free to others after a while; call release_device when you are done.`;
 
 export interface McpDeps extends Omit<ToolDeps, 'requestPlan' | 'onScreenshot' | 'lease'> {
   /** Phone leases shared with other sessions and windows; without it, any caller may use any phone. */

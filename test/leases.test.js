@@ -59,7 +59,7 @@ test('a holder\'s own call does not block itself, but blocks others', async () =
   assert.ok('exit' in await gateA.enter(['p1'], 'screenshot'));
   const inB = await gateB.enter(['p1'], 'tap');
   assert.match(inB.refused, /busy: run_flow for claude/);
-  assert.match(inB.refused, /Use a free phone from list_devices/);
+  assert.match(inB.refused, /call acquire_device with this serial and mode "wait".*or use a free phone from list_devices/);
   await inA.exit();
 });
 
@@ -150,4 +150,136 @@ test('the caller is the process on the other end of the connection', async () =>
   assert.deepEqual(parseLsofPids('p1\nf2\np1\np3\n'), [1, 3]);
   assert.equal(await callerOf(60720, async () => { throw new Error('no lsof'); }, 928, 'darwin'), UNKNOWN_AGENT);
   assert.equal(await callerOf(60720, run, 928, 'win32'), UNKNOWN_AGENT);
+});
+
+// Phase 2: waiting in line, takeovers, release.
+const C = {id: 'agent:303', label: 'cursor · ~/c', pid: 303};
+async function live(extra = {}) {
+  const dir = await mkdtemp(join(tmpdir(), 'mota-leases2-'));
+  return new LeaseStore({dir, idleSeconds: () => 120, deviceIdleSeconds: () => ({}), alive: () => true, waitMs: 120, pollMs: 10, takeoverMs: 200, ...extra});
+}
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
+
+test('waiting in line: refused while in use, granted once the holder goes idle, and the old holder is next in line', async () => {
+  const s = await live();
+  await s.claim(A, ['p1']);
+  const b = leaseGate(s, B);
+  const first = await b.acquire({serial: 'p1', candidates: ['p1'], mode: 'wait'});
+  assert.equal(first.status, 'waiting');
+  assert.match(first.text, /number 1 in line.*your place is kept/s);
+  await s.park(A.id);
+  const second = await b.acquire({serial: 'p1', candidates: ['p1'], mode: 'wait'});
+  assert.equal(second.status, 'granted');
+  assert.match(await leaseGate(s, A).notes(), /handed to codex.*first in line to get it back/);
+  const use = (await s.use(['p1'])).get('p1');
+  assert.deepEqual(use.queue.map(e => e.holder.id), [A.id], 'A was put back in line');
+});
+
+test('a free phone is kept for the first in line; others are refused until that turn passes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mota-leases3-'));
+  let now = 5_000_000;
+  const s = new LeaseStore({dir, idleSeconds: () => 120, deviceIdleSeconds: () => ({}), alive: () => true, now: () => now});
+  await s.claim(A, ['p1']);
+  assert.equal(await s.join(B, 'p1'), 1);
+  await s.release(A.id);
+  const refused = await s.claim(C, ['p1']);
+  assert.match(refused.reason, /kept for codex · ~\/b, first in line/);
+  now += 121_000;
+  assert.deepEqual(await s.claim(C, ['p1']), {ok: true}, 'B did not come for it in time');
+  assert.equal((await s.use(['p1'])).get('p1').queue.length, 0);
+});
+
+test('takeover: the user hands the phone over; the holder is told, put first in line, and its test stops', async () => {
+  const asked = [], cancelled = [];
+  const answer = deferred();
+  const s = await live({takeoverMs: 5000, prompt: async p => { asked.push(p); return answer.promise; }, cancelWork: serial => cancelled.push(serial)});
+  await s.claim(A, ['p1']);
+  const pending = leaseGate(s, B).acquire({serial: 'p1', candidates: ['p1'], mode: 'takeover'});
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0], {serial: 'p1', requester: B.label, holder: A.label});
+  answer.resolve('allow');
+  const r = await pending;
+  assert.equal(r.status, 'granted');
+  assert.match(r.text, /the user agreed/);
+  assert.deepEqual(cancelled, ['p1']);
+  assert.match(await leaseGate(s, A).notes(), /the user handed p1 to codex/);
+  assert.deepEqual((await s.use(['p1'])).get('p1').queue.map(e => e.holder.id), [A.id]);
+});
+
+test('takeover: the user says no', async () => {
+  const s = await live({takeoverMs: 5000, prompt: async () => 'decline'});
+  await s.claim(A, ['p1']);
+  const r = await leaseGate(s, B).acquire({serial: 'p1', candidates: ['p1'], mode: 'takeover'});
+  assert.equal(r.status, 'declined');
+  assert.match(r.text, /the user said no.*mode "wait"/s);
+  assert.equal((await s.use(['p1'])).get('p1').holder.id, A.id);
+});
+
+test('takeover without an answer: kept while still in use when time runs out', async () => {
+  const s = await live({waitMs: 1000, takeoverMs: 150, prompt: () => new Promise(() => {})});
+  await s.claim(A, ['p1']);
+  const r = await leaseGate(s, B).acquire({serial: 'p1', candidates: ['p1'], mode: 'takeover'});
+  assert.equal(r.status, 'declined');
+  assert.match(r.text, /nobody answered within 0 s and p1 was still in use|still in use/);
+});
+
+test('takeover without an answer: handed over as soon as the phone is idle; a late click only says how it went', async () => {
+  const late = deferred();
+  let decided;
+  const s = await live({waitMs: 2000, takeoverMs: 5000, prompt: async (p, d) => { decided = d; return late.promise; }});
+  await s.claim(A, ['p1']);
+  const pending = leaseGate(s, B).acquire({serial: 'p1', candidates: ['p1'], mode: 'takeover'});
+  await new Promise(r => setTimeout(r, 40));
+  await s.park(A.id);
+  const r = await pending;
+  assert.equal(r.status, 'granted');
+  assert.match(r.text, /p1 became idle/);
+  assert.match(decided(), /handed to codex/);
+});
+
+test('a takeover still pending when the call returns is answered on the next call', async () => {
+  const answer = deferred();
+  const s = await live({waitMs: 50, takeoverMs: 5000, prompt: () => answer.promise});
+  await s.claim(A, ['p1']);
+  const b = leaseGate(s, B);
+  const first = await b.acquire({serial: 'p1', candidates: ['p1'], mode: 'takeover'});
+  assert.equal(first.status, 'asking');
+  assert.match(first.text, /no answer yet.*call acquire_device again/is);
+  answer.resolve('allow');
+  await new Promise(r => setTimeout(r, 40));
+  const second = await b.acquire({serial: 'p1', candidates: ['p1'], mode: 'takeover'});
+  assert.equal(second.status, 'granted');
+});
+
+test('without a serial, the first free phone is taken; with none free, holders are listed', async () => {
+  const s = await live();
+  await s.claim(A, ['p1']);
+  const b = leaseGate(s, B);
+  const r = await b.acquire({candidates: ['p1', 'p2'], mode: 'wait'});
+  assert.equal(r.status, 'granted');
+  assert.equal(r.serial, 'p2');
+  const none = await leaseGate(s, C).acquire({candidates: ['p1', 'p2'], mode: 'wait'});
+  assert.equal(none.status, 'none');
+  assert.match(none.text, /p1 · in use by claude[\s\S]*p2 · in use by codex/);
+});
+
+test('a session may set its own idle time, up to the cap', async () => {
+  const s = await live({maxSessionIdleSeconds: () => 900});
+  const r = await leaseGate(s, A).acquire({serial: 'p1', candidates: ['p1'], mode: 'wait', idleSeconds: 5000});
+  assert.match(r.text, /idle after 900 s/);
+  assert.equal((await s.read()).sessions[A.id].idleSeconds, 900);
+  assert.equal(await s.setSessionIdle(A, 5000, true), 5000, 'the user is not capped');
+});
+
+test('release gives phones back and leaves lines', async () => {
+  const s = await live();
+  await s.claim(A, ['p1', 'p2']);
+  await s.claim(B, ['p3']);
+  await s.join(A, 'p3');
+  assert.deepEqual((await leaseGate(s, A).release(['p1'])).sort(), ['p1']);
+  assert.deepEqual(await leaseGate(s, A).release(), ['p2']);
+  const use = await s.use(['p1', 'p2', 'p3']);
+  assert.equal(use.get('p1').state, 'free');
+  assert.equal(use.get('p3').queue.length, 0);
 });

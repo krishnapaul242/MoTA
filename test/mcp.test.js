@@ -147,3 +147,39 @@ test('phones in use by another session are refused, and list_devices says who ha
     await client.close();
   } finally { await s.server.stop(); }
 });
+
+test('acquire_device waits in line and release_device gives phones back', async () => {
+  const {LeaseStore} = require('../out/leases');
+  const leases = new LeaseStore({dir: await mkdtemp(join(tmpdir(), 'mota-mcp-acq-')), idleSeconds: () => 120, deviceIdleSeconds: () => ({}), waitMs: 100, pollMs: 10});
+  const other = {id: `agent:${process.ppid}`, label: 'codex · ~/other', pid: process.ppid};
+  await leases.claim(other, ['emulator-5554']);
+  const s = await start({leases});
+  try {
+    const client = await connect(s.url);
+    const names = (await client.listTools()).tools.map(t => t.name);
+    assert.ok(names.includes('acquire_device') && names.includes('release_device'));
+    const wait = await client.callTool({name: 'acquire_device', arguments: {serial: 'emulator-5554'}});
+    assert.match(wait.content[0].text, /Still waiting for emulator-5554: you are number 1 in line/);
+    await leases.park(other.id);
+    const got = await client.callTool({name: 'acquire_device', arguments: {serial: 'emulator-5554', mode: 'wait'}});
+    assert.match(got.content[0].text, /emulator-5554 is yours/);
+    const rel = await client.callTool({name: 'release_device', arguments: {}});
+    assert.match(rel.content[0].text, /Released emulator-5554/);
+    const gone = await client.callTool({name: 'acquire_device', arguments: {serial: 'nope-1'}});
+    assert.ok(gone.isError);
+    await client.close();
+  } finally { await s.server.stop(); }
+});
+
+test('the takeover notification maps buttons to answers and only reports a late click', async () => {
+  const {takeoverPrompt} = require('../out/ai/host');
+  const shown = [];
+  const vscode = pick => ({window: {showWarningMessage: async (msg, ...items) => { shown.push(msg); return pick; }, showInformationMessage: async m => { shown.push(m); }}});
+  const p = {serial: 'p1', requester: 'codex · ~/b', holder: 'claude · ~/a', busy: 'a Maestro test run, started 5 s ago'};
+  assert.equal(await takeoverPrompt(vscode('Hand over'), p, () => undefined), 'allow');
+  assert.equal(await takeoverPrompt(vscode('Keep'), p, () => undefined), 'decline');
+  assert.equal(await takeoverPrompt(vscode(undefined), p, () => undefined), undefined);
+  assert.match(shown[0], /codex · ~\/b asks for p1, which claude · ~\/a is using \(busy: a Maestro test run/);
+  assert.equal(await takeoverPrompt(vscode('Keep'), p, () => 'handed to codex · ~/b'), undefined);
+  assert.equal(shown.at(-1), 'p1 was already handed to codex · ~/b.');
+});

@@ -122,6 +122,22 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
       return text([notes, lines.length ? lines.join('\n') : 'No devices connected.'].filter(Boolean).join('\n\n'));
     }), read),
 
+    tool('acquire_device', 'Get a phone that another session is using, or any free phone. mode "wait" waits in line (each call waits up to about 45 s; call again to keep your place). mode "takeover" asks the user in VS Code to hand it to you now; with no answer in 120 s you get it only if it is idle by then. Without serial, takes the first free phone. idleSeconds sets how long your phones stay yours without activity (others may take them after that).',
+      { serial: serial.optional(), mode: z.enum(['wait', 'takeover']).default('wait'), idleSeconds: z.number().int().min(10).max(86400).optional() },
+      safely(async ({ serial: s, mode, idleSeconds }) => {
+        if (!deps.lease) return text('Phone sharing is off here: use any phone from list_devices.');
+        const candidates = (await adb.devices()).filter(d => d.state === 'device').map(d => d.serial);
+        if (s && !candidates.includes(s)) return text(`${s} is not connected and ready. Use list_devices.`, true);
+        const r = await deps.lease.acquire({ serial: s, candidates, mode, idleSeconds });
+        return text(r.text, r.status === 'declined' || r.status === 'none');
+      }), read),
+    tool('release_device', 'Give phones back so other sessions can use them at once, when you are done with them. Without serials, releases all of yours and leaves every line you wait in.',
+      { serials: z.array(serial).max(50).optional() }, safely(async ({ serials: list }) => {
+        if (!deps.lease) return text('Phone sharing is off here.');
+        const released = await deps.lease.release(list);
+        return text(released.length ? `Released ${released.join(', ')}.` : 'You held none of those phones.');
+      }), read),
+
     tool('device_info', 'Android version, maker, screen size, battery and the app in the foreground.', { serial }, safely(async ({ serial: s }) => {
       const get = (args: string[]) => adb.shell(s, args).catch(e => `unavailable (${e instanceof Error ? e.message.split('\n')[0] : e})`);
       const [release, maker, model, size, battery, focus] = await Promise.all([get(['getprop', 'ro.build.version.release']), get(['getprop', 'ro.product.manufacturer']), get(['getprop', 'ro.product.model']),

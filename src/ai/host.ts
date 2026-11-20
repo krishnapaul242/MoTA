@@ -7,7 +7,7 @@ import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import type * as VSCode from 'vscode';
 import type { Adb } from '../adb';
 import { InputRouter } from '../helperInput';
-import { leaseGate, LeaseStore, type Holder } from '../leases';
+import { leaseGate, LeaseStore, type Answer, type Holder, type TakeoverPrompt } from '../leases';
 import { discoverFlows, filterByTags } from '../maestro/flows';
 import { MaestroRunner, resolveMaestro } from '../maestro/runner';
 import { BUILTIN_TOOLS, decide, targetSerials, type PolicyContext } from './policy';
@@ -426,6 +426,16 @@ export function conversationHolder(conv: { convId: string; title: string }, pid 
 
 let instance: AiHostImpl | undefined;
 
+/** Asks the user, without blocking the window, whether to hand a phone to another session. A click after it settled by itself only says how it went. */
+export async function takeoverPrompt(vscode: Pick<typeof VSCode, 'window'>, p: TakeoverPrompt, decided: () => string | undefined): Promise<Answer> {
+  const pick = await vscode.window.showWarningMessage(
+    `${p.requester} asks for ${p.serial}, which ${p.holder === 'nobody' ? 'is' : `${p.holder} is using`}${p.busy ? ` (busy: ${p.busy})` : ''}. Hand it over? Without an answer it is handed over as soon as it is idle, and kept if it is still in use after 2 minutes.`,
+    'Hand over', 'Keep');
+  const already = decided();
+  if (already) { if (pick) void vscode.window.showInformationMessage(`${p.serial} was already ${already}.`); return undefined; }
+  return pick === 'Hand over' ? 'allow' : pick === 'Keep' ? 'decline' : undefined;
+}
+
 /** The extension's single AI and test host. Pages connect to it; conversations and runs outlive any one page. */
 export function aiHost(context: VSCode.ExtensionContext, adb: Adb): AiHost {
   if (instance) return instance;
@@ -449,6 +459,9 @@ export function aiHost(context: VSCode.ExtensionContext, adb: Adb): AiHost {
     leases: new LeaseStore({
       idleSeconds: () => config().get<number>('lease.idleSeconds', 120),
       deviceIdleSeconds: () => config().get<Record<string, number>>('lease.deviceIdleSeconds', {}),
+      maxSessionIdleSeconds: () => config().get<number>('lease.maxSessionIdleSeconds', 900),
+      prompt: (p, decided) => takeoverPrompt(vscode, p, decided),
+      cancelWork: serial => instance?.runner.cancelOn(serial),
     }),
   });
   const created = instance;

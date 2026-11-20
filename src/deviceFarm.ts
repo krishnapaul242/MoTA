@@ -82,8 +82,15 @@ const KEYS = ['back', 'home', 'recents', 'volumeUp', 'volumeDown', 'wake', 'slee
 const THUMBNAIL_MS = 5000, LIST_MS = 3000, INFO_MS = 60000;
 
 /** What the farm shows about who uses a phone, or undefined when it is free. */
-export function farmUse(use: DeviceUse | undefined, now: number): { state: 'active' | 'idle' | 'busy'; text: string; title: string } | undefined {
-  if (!use || use.state === 'free') return undefined;
+export function farmUse(use: DeviceUse | undefined, now: number): { state: 'active' | 'idle' | 'busy' | 'free'; text: string; title: string } | undefined {
+  const r = farmUseBase(use, now);
+  if (!r || !use) return r;
+  const extra = [use.queue.length ? `${use.queue.length} waiting: ${use.queue.map(e => e.holder.label).join(', ')}` : '', use.takeover ? `${use.takeover.requester.label} asked you to hand it over` : ''].filter(Boolean);
+  return extra.length ? { ...r, text: r.text + (use.takeover ? ' · takeover asked' : ` · ${use.queue.length} waiting`), title: `${r.title}\n${extra.join('\n')}` } : r;
+}
+function farmUseBase(use: DeviceUse | undefined, now: number): { state: 'active' | 'idle' | 'busy' | 'free'; text: string; title: string } | undefined {
+  if (!use) return undefined;
+  if (use.state === 'free') return use.queue.length ? { state: 'free', text: `Kept for ${use.queue[0].holder.label}`, title: `${use.queue[0].holder.label} is first in line for this phone.` } : undefined;
   if (use.state === 'busy') { const o = use.ops[0]; return { state: 'busy', text: 'Busy', title: `${o.what}${o.holderLabel ? ` for ${o.holderLabel}` : ''}, for ${ago(now - o.startedAt)}` }; }
   const who = use.holder!.label, since = ago(now - (use.lastActivity ?? now));
   return use.state === 'active'

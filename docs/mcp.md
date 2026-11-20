@@ -26,7 +26,13 @@ Several Claude Code, Codex or Cursor sessions, and MoTA's own assistant, can use
 - A phone becomes **idle** after `mota.lease.idleSeconds` (120 s by default) without activity, for example while the session builds an APK or waits for your answer. Another session can then take it at once; the first session is told on its next call.
 - A phone running a Maestro test is **busy**, never idle, whoever started the test.
 - When a session ends or crashes, its phones are free straight away. When MoTA's assistant finishes a reply, its phones become idle.
-- The farm shows who uses each phone on its card.
+- A session that needs a phone someone else is using calls `acquire_device`:
+    - **wait** puts it in line. When the phone becomes free or idle, the first in line gets it; the phone is kept for that session for one idle period, then the next in line gets its turn.
+    - **takeover** asks you in a VS Code notification to hand it over. If you don't answer, it is handed over as soon as it is idle, and kept if it is still in use after 2 minutes. Handing over a phone that is running a MoTA test stops that test.
+    - Without a serial, it takes any free phone. With `idleSeconds`, a session sets its own idle time, up to `mota.lease.maxSessionIdleSeconds`.
+- A session that loses its phone, by idling or by takeover, is told on its next call and put first in line to get it back.
+- `release_device` gives phones back at once.
+- The farm shows who uses each phone, who is waiting, and pending takeover requests on its card.
 
 Sessions are told apart by their process: one Claude Code or Codex window is one session, labelled with its program and folder. On Windows, all outside agents share one identity for now.
 

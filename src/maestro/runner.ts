@@ -103,6 +103,9 @@ export class MaestroRunner {
     return run;
   }
 
+  /** Stops every run's work on one phone, including Claude's own flow checks. */
+  cancelOn(serial: string) { for (const run of this.runs.values()) if (run.devices.has(serial)) this.cancel(run.runId, serial); }
+
   cancel(runId: string, serial?: string) {
     const run = this.runs.get(runId);
     if (!run) return;
