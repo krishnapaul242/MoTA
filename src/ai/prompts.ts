@@ -36,6 +36,7 @@ How to work:
 - ${PERMISSION_TEXT[ctx.permission]}
 - Prefer ui_tree for finding things to tap (exact centres in device pixels); use screenshot to see layout, images or games. Screenshots may be scaled: the tool says the factor.
 - Other sessions and AI agents share these phones. If a call is refused because someone else is using a phone, tell the user who has it and offer to wait (acquire_device mode "wait") or ask for it (mode "takeover"); don't retry in a loop.
+- Pressure tests: fill_storage leaves little free storage (install first; always clear_storage_fill when done), trim_memory sends a low-memory signal, kill_background_app kills the app in the background as Android does and reopens it.
 - Never try to unlock a PIN, pattern or password, or sign in with real personal accounts. If a phone is locked or needs a person, say so.
 - Maestro: flows live in ${flows}. A flow is a header (appId, optional name and tags), a "---" line, then steps such as launchApp, tapOn, inputText, assertVisible, scrollUntilVisible, back. Prefer text or id selectors over coordinates. After writing or fixing a flow, check it with run_flow on one device; at most 3 attempts, then report what blocks it.
 - Diagnosing a failed flow: use run_results for steps, error, screenshot and log; read the flow; classify it as app bug, flaky, broken test (selector/text changed) or device/environment problem (system dialog, lock screen, network), with the evidence. For a broken test, propose the corrected flow. For an app bug, write a short bug report: steps, expected, actual, device, log lines.
@@ -57,7 +58,9 @@ export function describeCall(tool: string, input: Record<string, unknown>): stri
     case 'swipe': return `swipe ${input.x},${input.y} → ${input.x2},${input.y2}`;
     case 'type_text': return `type ${JSON.stringify(String(input.text ?? '').slice(0, 40))}`;
     case 'press_key': return `press ${input.key}`;
-    case 'launch_app': case 'clear_app_data': case 'uninstall_app': return `${name} ${input.package}`;
+    case 'launch_app': case 'clear_app_data': case 'uninstall_app': case 'kill_background_app': return `${name} ${input.package}`;
+    case 'trim_memory': return `trim_memory ${input.package} ${input.level}`;
+    case 'fill_storage': return `fill_storage leave ${input.leaveFreeMb} MB free`;
     case 'run_flow': case 'read_flow': case 'write_flow': return `${name} ${input.path}`;
     case 'install_apk': return `install_apk ${String(input.apk ?? '').replace(/^.*\//, '')}${on}`;
     case 'start_test_run': return `start_test_run ${(input.flows as unknown[] | undefined)?.length ?? 0} flows${on}`;

@@ -5,6 +5,7 @@ import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import type { Adb } from '../adb';
 import { captureScreenshot } from '../deviceControl';
 import { launchApp } from '../deviceActions';
+import { clearStorageFill, describeFill, fillStorage, formatKb, killInBackground, storageState, trimMemory, TRIM_LEVELS } from '../pressure';
 import type { InputRouter } from '../helperInput';
 import { discoverFlows, parseFlowHeader } from '../maestro/flows';
 import { describeCommand, latestFlowDir } from '../maestro/results';
@@ -121,7 +122,9 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
       const list = await adb.devices();
       const uses = await deps.lease?.describe(list.map(d => d.serial));
       const notes = await deps.lease?.notes();
-      const lines = list.map(d => `${d.serial} · ${d.model} · ${d.state}${uses?.get(d.serial) ? ` · ${uses.get(d.serial)}` : ''}`);
+      // A storage fill left on a phone makes installs and tests fail there, so every session sees it.
+      const fills = new Map(await Promise.all(list.filter(d => d.state === 'device').map(async d => [d.serial, await storageState(adb, d.serial).then(describeFill, () => '')] as const)));
+      const lines = list.map(d => `${d.serial} · ${d.model} · ${d.state}${uses?.get(d.serial) ? ` · ${uses.get(d.serial)}` : ''}${fills.get(d.serial) ? ` · ${fills.get(d.serial)}` : ''}`);
       return text([notes, lines.length ? lines.join('\n') : 'No devices connected.'].filter(Boolean).join('\n\n'));
     }), read),
 
@@ -137,8 +140,15 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
     tool('release_device', 'Give phones back so other sessions can use them at once, when you are done with them. Without serials, releases all of yours and leaves every line you wait in.',
       { serials: z.array(serial).max(50).optional() }, safely(async ({ serials: list }) => {
         if (!deps.lease) return text('Phone sharing is off here.');
+        const me = (await deps.lease.holder()).label;
         const released = await deps.lease.release(list);
-        return text(released.length ? `Released ${released.join(', ')}.` : 'You held none of those phones.');
+        // The next session should not inherit a full phone: remove the storage fill this session made.
+        const cleared = (await Promise.all(released.map(async s => {
+          const state = await storageState(adb, s).catch(() => undefined);
+          if (!state?.fillKb || (state.owner && state.owner !== me)) return '';
+          return clearStorageFill(adb, s).then(() => s, () => '');
+        }))).filter(Boolean);
+        return text(released.length ? `Released ${released.join(', ')}.${cleared.length ? ` Removed your storage fill on ${cleared.join(', ')}.` : ''}` : 'You held none of those phones.');
       }), read),
 
     tool('device_info', 'Android version, maker, screen size, battery and the app in the foreground.', { serial }, safely(async ({ serial: s }) => {
@@ -266,6 +276,20 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
         deps.onFlowWritten(file, before);
         return text(`${before === undefined ? 'Created' : 'Updated'} ${path}.`);
       })),
+
+    tool('fill_storage', 'Create storage pressure: fill the phone until about leaveFreeMb of storage is free, so apps get real out-of-space errors (0 fills it completely). Replaces an earlier fill. Install the app and run anything that needs space first. The fill stays until clear_storage_fill or release_device; always remove it when the test is done.',
+      { serial, leaveFreeMb: z.number().int().min(0).max(1_000_000) }, safely(async ({ serial: s, leaveFreeMb }) => {
+        const { before, after } = await fillStorage(adb, s, leaveFreeMb, (await deps.lease?.holder())?.label);
+        return text(`${s} now has ${formatKb(after.freeKb)} free (was ${formatKb(before.freeKb + before.fillKb)} without a fill); the fill is ${formatKb(after.fillKb)}. Remove it with clear_storage_fill when done.`);
+      })),
+    tool('clear_storage_fill', 'Remove the storage fill made by fill_storage and give the space back.', { serial }, safely(async ({ serial: s }) => {
+      const { freedKb, after } = await clearStorageFill(adb, s);
+      return text(freedKb ? `Removed the ${formatKb(freedKb)} fill. ${s} has ${formatKb(after.freeKb)} free.` : `${s} had no storage fill. It has ${formatKb(after.freeKb)} free.`);
+    })),
+    tool('trim_memory', 'Tell a running app that memory is low (its onTrimMemory callback); no memory is actually taken. RUNNING_MODERATE, RUNNING_LOW and RUNNING_CRITICAL are for an app in use on screen; HIDDEN, BACKGROUND, MODERATE and COMPLETE for an app in the background.',
+      { serial, package: pkg, level: z.enum(TRIM_LEVELS) }, safely(async ({ serial: s, package: p, level }) => text(await trimMemory(adb, s, p, level)))),
+    tool('kill_background_app', 'Test recovery from a low-memory kill: sends the app to the background (presses Home), kills its process the way Android does when memory runs out (saved state is kept, unlike a force stop), and reopens it unless relaunch is false. Afterwards check that the app restored its screen and data. Unsaved in-memory state of the app is lost, as on a real phone.',
+      { serial, package: pkg, relaunch: z.boolean().default(true) }, safely(async ({ serial: s, package: p, relaunch }) => text(await killInBackground(adb, s, p, relaunch)))),
 
     tool('clear_app_data', 'Delete all data of an app on a device (logs the user out, resets it).', { serial, package: pkg, reason, taskId }, safely(async ({ serial: s, package: p }) => text(await adb.shell(s, ['pm', 'clear', p]))), destructive),
     tool('uninstall_app', 'Uninstall an app from a device, deleting its data.', { serial, package: pkg, reason, taskId }, safely(async ({ serial: s, package: p }) => text(await adb.run(['-s', s, 'uninstall', p]))), destructive),

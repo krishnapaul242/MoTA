@@ -46,6 +46,7 @@ nav:
   - Testing:
       - Recordings and replay: recordings.md
       - Maestro test runs: maestro.md
+      - Storage and memory pressure: pressure.md
   - AI:
       - Claude assistant: ai-assistant.md
       - MCP for other agents: mcp.md
