@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Device cleanup by AI agents (`clear_app_data`, `uninstall_app`) now carries a reason and the task the session is working on, shown when you approve. **Always allow cleanup** approves it once for all later calls, and **MoTA: Device Cleanup Approvals** shows what was cleaned up, when, by which session and why, and turns the standing approval off.
 - Phones are shared safely between AI sessions: a session that changes a phone claims it, other sessions are refused while it is in use or running a test, and idle phones (120 s by default, `mota.lease.idleSeconds`) are handed over at once. `list_devices` and the farm show who uses each phone. Works across VS Code windows.
 - New `acquire_device` and `release_device` tools: wait in line for a phone, or ask the user (a VS Code notification) to hand it over now. A session that loses its phone is put first in line to get it back.
 - Phones also count as busy during MoTA recordings and replays, Maestro commands started outside MoTA, and instrumentation tests. Agents get a warning while you use a phone yourself in VS Code.

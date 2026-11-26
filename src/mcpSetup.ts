@@ -4,6 +4,7 @@ import { isAbsolute, join } from 'node:path';
 import type * as VSCode from 'vscode';
 import type { Adb } from './adb';
 import { aiHost, resolveClaude } from './ai/host';
+import { CLEANUP_TOOLS, CleanupApprovals, cleanupPurpose, cleanupPurposeText, cleanupWhat } from './cleanupApprovals';
 import { MCP_PATH, McpHttpServer } from './ai/mcpHttp';
 import { backupFlow } from './ai/tools';
 import { hookHeaderExists, installHooks, removeHooks, writeHookHeader } from './hookSetup';
@@ -32,6 +33,8 @@ export function registerMcp(vscode: typeof VSCode, context: VSCode.ExtensionCont
   const output = vscode.window.createOutputChannel('MoTA MCP');
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
   status.command = 'mota.mcpSetup';
+  const cleanup = new CleanupApprovals(context.globalState);
+  const ALWAYS = 'Always allow cleanup';
   let token = '';
   let http: McpHttpServer | undefined;
   let syncing = Promise.resolve();
@@ -50,11 +53,18 @@ export function registerMcp(vscode: typeof VSCode, context: VSCode.ExtensionCont
       onFlowWritten: (file, before) => { if (before !== undefined) void backupFlow(workspaceRoot(), flowsFolder(), file, before).then(b => output.appendLine(`  previous version saved to ${b}`)); },
       token: () => token,
       log: line => output.appendLine(`${new Date().toLocaleTimeString()}  ${line}`),
-      confirm: async (_tool, summary, args) => {
+      cleanup,
+      confirm: async (tool, summary, args, who) => {
         const devices = [args.serial, ...(Array.isArray(args.serials) ? args.serials : [])].filter(Boolean).join(', ');
+        const isCleanup = CLEANUP_TOOLS.has(tool);
+        const detail = isCleanup ? `${cleanupPurposeText(cleanupPurpose(args), who)}\n\nThis deletes data and cannot be undone.` : 'This deletes data and cannot be undone.';
         const answer = await vscode.window.showWarningMessage(`An AI agent connected to MoTA wants to ${summary}${devices ? ` on ${devices}` : ''}.`,
-          { modal: true, detail: 'This deletes data and cannot be undone.' }, 'Allow');
-        return answer === 'Allow';
+          { modal: true, detail }, 'Allow', ...(isCleanup ? [ALWAYS] : []));
+        if (answer === ALWAYS) {
+          await cleanup.setStanding(true);
+          void vscode.window.showInformationMessage('Device cleanup by AI agents no longer asks. Each call is recorded; see or turn this off in “MoTA: Device Cleanup Approvals”.', 'Open').then(a => { if (a) void vscode.commands.executeCommand('mota.cleanupApprovals'); });
+        }
+        return answer === 'Allow' || answer === ALWAYS;
       },
     }, String(context.extension?.packageJSON?.version ?? '0.0.0'));
   }
@@ -148,8 +158,38 @@ export function registerMcp(vscode: typeof VSCode, context: VSCode.ExtensionCont
     } catch (e) { void vscode.window.showErrorMessage(`Couldn't add MoTA's hooks: ${e instanceof Error ? e.message : e}`); }
   }
 
+  /** Turn the standing approval on or off, and look through what was cleaned up, why and for which task. */
+  async function cleanupApprovals() {
+    for (;;) {
+      const since = cleanup.standingSince();
+      const time = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const history = cleanup.history();
+      type Item = VSCode.QuickPickItem & { toggle?: boolean };
+      const items: Item[] = [
+        { label: `${since ? '$(pass-filled)' : '$(circle-large-outline)'} Clear app data and uninstall apps without asking`, toggle: true,
+          description: since ? `on since ${time(since)} — select to ask every time again` : 'asks every time — select to approve all at once',
+          detail: 'For test phones. Cleanup cannot be undone; every call is recorded below.' },
+        { label: 'History', kind: vscode.QuickPickItemKind.Separator },
+        ...history.map((e): Item => ({
+          label: `${e.decision === 'declined' ? '$(circle-slash) Declined:' : e.result === 'error' ? '$(error) Failed:' : '$(check)'} ${e.decision === 'declined' || e.result === 'error' ? `${e.tool} ${e.package} on ${e.serial}` : cleanupWhat(e)}`,
+          description: `${time(e.at)} · ${e.decision === 'standing' ? 'standing approval' : e.decision === 'allowed' ? 'approved' : 'declined'} · ${e.who}`,
+          detail: `Why: ${e.reason || 'no reason given'} · For: ${e.taskId ? `task ${e.taskId}` : 'no task named'}`,
+        })),
+        ...(history.length ? [] : [{ label: 'No cleanup recorded yet' }]),
+      ];
+      const picked = await vscode.window.showQuickPick(items, { title: 'Device cleanup by AI agents', placeHolder: 'Cleanup calls from agents, newest first', matchOnDescription: true, matchOnDetail: true });
+      if (!picked?.toggle) return;
+      if (!since) {
+        const ok = await vscode.window.showWarningMessage('Let AI agents clear app data and uninstall apps without asking?', { modal: true, detail: 'This applies to every phone connected to this computer. Cleanup cannot be undone. Each call is recorded with its reason and task, and you can turn this off here.' }, 'Allow all');
+        if (ok !== 'Allow all') continue;
+      }
+      await cleanup.setStanding(!since);
+    }
+  }
+
   context.subscriptions.push(output, status,
     vscode.commands.registerCommand('mota.mcpSetup', setup),
+    vscode.commands.registerCommand('mota.cleanupApprovals', cleanupApprovals),
     vscode.commands.registerCommand('mota.installHooks', async () => {
       if (!config().get<boolean>('mcp.enabled', false)) { await setup(); return; }
       await sync(); if (http) await hooks(http.port!);

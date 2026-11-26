@@ -156,6 +156,10 @@
         "shortTitle": "Connect AI agents"
       },
       {
+        "command": "mota.cleanupApprovals",
+        "title": "MoTA: Device Cleanup Approvals (AI Agents)"
+      },
+      {
         "command": "mota.installHooks",
         "title": "MoTA: Install Claude Code Hooks (Phone Sharing)"
       },

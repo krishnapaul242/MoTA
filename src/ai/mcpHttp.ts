@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { CLEANUP_TOOLS, cleanupPurpose, type CleanupEntry } from '../cleanupApprovals';
 import { leaseGate, type Holder, type LeaseGate, type LeaseStore } from '../leases';
 import { callerOfSocket, peerPid, sessionAbove, UNKNOWN_AGENT } from './caller';
 import { handleHook } from './hooks';
@@ -22,7 +23,7 @@ const NOT_SERVED = new Set(['propose_plan']);
 const INSTRUCTIONS = `MoTA controls the Android phones connected to the user's computer and runs Maestro tests on them.
 Start with list_devices and use the serials it returns. Prefer ui_tree over screenshots for finding what to tap: it is cheaper and gives exact tap centres in device pixels.
 Maestro flows live in the workspace flows folder; write_flow can only write there. run_flow takes about 40 s of Maestro start-up before the flow runs.
-Calls that delete data (clear_app_data, uninstall_app, overwriting a flow) wait for the user to approve them in VS Code.
+Calls that delete data (clear_app_data, uninstall_app, overwriting a flow) wait for the user to approve them in VS Code. clear_app_data and uninstall_app need a reason (why you need it) and take taskId (the task your session is working on); the user may have approved device cleanup once for all calls, in which case they run at once and are recorded.
 Other sessions and agents share these phones. list_devices shows who is using each one. A call that changes a phone claims it for you; it is refused while someone else is using that phone or a test is running on it. To get such a phone, call acquire_device: mode "wait" waits in line, mode "takeover" asks the user to hand it over. Phones you stop using become free to others after a while; call release_device when you are done.
 Before you change a phone with your own shell commands (adb, maestro, gradle install or connected tests), call acquire_device for it, so other sessions know it is in use.`;
 
@@ -31,8 +32,10 @@ export interface McpDeps extends Omit<ToolDeps, 'requestPlan' | 'onScreenshot' |
   leases?: LeaseStore;
   /** The bearer token clients must send. */
   token: () => string;
-  /** Asks the user in VS Code before a call that deletes data; true lets it run. */
-  confirm: (tool: string, summary: string, args: Record<string, unknown>) => Promise<boolean>;
+  /** Asks the user in VS Code before a call that deletes data; true lets it run. `who` is the session asking. */
+  confirm: (tool: string, summary: string, args: Record<string, unknown>, who?: string) => Promise<boolean>;
+  /** Device cleanup (clear data, uninstall): whether the user approved it for all calls, and the record of each call. */
+  cleanup?: { standing(): boolean; record(entry: Omit<CleanupEntry, 'at'>): void };
   /** One line per tool call, for the user to see what agents do. */
   log: (line: string) => void;
   /** Finds the session above a hook's process (tests replace it). */
@@ -58,13 +61,23 @@ export function buildMcpServer(deps: McpDeps, version: string, lease?: LeaseGate
         // Don't ask the user about a call the lease would refuse anyway.
         const blocked = risk === 'data-loss' && lease ? await lease.check(targetSerials(args)) : undefined;
         if (blocked) { deps.log(`${summary}${who} — refused, phone in use`); return { content: [{ type: 'text', text: blocked }], isError: true }; }
-        if (risk === 'data-loss' && !(await deps.confirm(def.name, summary, args))) {
-          deps.log(`${summary} — declined`);
+        const cleanup = risk === 'data-loss' && CLEANUP_TOOLS.has(def.name);
+        const purpose = cleanupPurpose(args);
+        const holder = who.slice(2, -1);
+        const record = (decision: CleanupEntry['decision'], result?: CleanupEntry['result']) => {
+          if (cleanup) deps.cleanup?.record({ tool: def.name, serial: String(args.serial ?? ''), package: String(args.package ?? ''), who: holder || 'an AI agent', ...purpose, decision, ...(result ? { result } : {}) });
+        };
+        // Cleanup the user approved once for all calls runs without asking; everything else that deletes data asks.
+        const standing = cleanup && !!deps.cleanup?.standing();
+        if (risk === 'data-loss' && !standing && !(await deps.confirm(def.name, summary, args, holder || undefined))) {
+          record('declined');
+          deps.log(`${summary}${who} — declined${cleanup ? ` · why: ${purpose.reason}` : ''}`);
           return { content: [{ type: 'text', text: 'The user declined this in VS Code. Do not retry it; ask them what they want instead.' }], isError: true };
         }
         const started = Date.now();
         const result = await handler(args, extra);
-        deps.log(`${summary}${'serial' in args ? ` on ${args.serial}` : ''}${who} — ${result?.isError ? 'error' : 'ok'} in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+        record(standing ? 'standing' : 'allowed', result?.isError ? 'error' : 'ok');
+        deps.log(`${summary}${'serial' in args ? ` on ${args.serial}` : ''}${who} — ${result?.isError ? 'error' : 'ok'} in ${((Date.now() - started) / 1000).toFixed(1)} s${cleanup ? ` · ${standing ? 'standing approval' : 'approved'} · why: ${purpose.reason}${purpose.taskId ? ` · task ${purpose.taskId}` : ''}` : ''}`);
         return result;
       }) as never);
   }

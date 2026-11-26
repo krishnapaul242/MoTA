@@ -10,7 +10,7 @@ const {clientConfigs} = require('../out/mcpSetup');
 
 const TOKEN = 'secret-token-123';
 
-async function start({confirm = async () => true, leases} = {}) {
+async function start({confirm = async () => true, leases, cleanup} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mota-mcp-'));
   const flows = join(root, '.maestro');
   await mkdir(flows);
@@ -23,7 +23,7 @@ async function start({confirm = async () => true, leases} = {}) {
   const server = new McpHttpServer({
     adb, input: {send: async () => undefined}, runner: {running: () => [], latest: () => undefined},
     flowsFolder: () => flows, workspaceRoot: () => root, screenshotSide: () => 960,
-    onFlowWritten() {}, token: () => TOKEN, log: l => lines.push(l), leases,
+    onFlowWritten() {}, token: () => TOKEN, log: l => lines.push(l), leases, cleanup,
     confirm: async (tool, summary) => { asked.push(summary); return confirm(tool); },
   }, '9.9.9');
   const port = await server.start(0);
@@ -62,11 +62,11 @@ test('data-loss calls wait for the user in VS Code', async () => {
   const s = await start({confirm: async () => allow});
   try {
     const client = await connect(s.url);
-    const declined = await client.callTool({name: 'uninstall_app', arguments: {serial: 'emulator-5554', package: 'com.example.app'}});
+    const declined = await client.callTool({name: 'uninstall_app', arguments: {serial: 'emulator-5554', package: 'com.example.app', reason: 'Start the login test from a clean state'}});
     assert.ok(declined.isError); assert.match(declined.content[0].text, /declined/);
     assert.ok(!s.shells.some(c => c.includes('uninstall')), 'nothing ran');
     allow = true;
-    const ok = await client.callTool({name: 'uninstall_app', arguments: {serial: 'emulator-5554', package: 'com.example.app'}});
+    const ok = await client.callTool({name: 'uninstall_app', arguments: {serial: 'emulator-5554', package: 'com.example.app', reason: 'Start the login test from a clean state'}});
     assert.ok(!ok.isError);
     assert.ok(s.shells.some(c => c.includes('uninstall com.example.app')));
     assert.deepEqual(s.asked, ['uninstall_app com.example.app', 'uninstall_app com.example.app']);
@@ -134,7 +134,7 @@ test('phones in use by another session are refused, and list_devices says who ha
     const tap = await client.callTool({name: 'tap', arguments: {serial: 'emulator-5554', x: 1, y: 2}});
     assert.ok(tap.isError);
     assert.match(tap.content[0].text, /in use by codex · ~\/other/);
-    const clear = await client.callTool({name: 'clear_app_data', arguments: {serial: 'emulator-5554', package: 'com.example.app'}});
+    const clear = await client.callTool({name: 'clear_app_data', arguments: {serial: 'emulator-5554', package: 'com.example.app', reason: 'Start the login test from a clean state'}});
     assert.ok(clear.isError);
     assert.equal(asked, 0, 'the user is not asked about a call that would be refused');
     assert.ok(!s.shells.some(c => /pm clear/.test(c)));
@@ -182,4 +182,41 @@ test('the takeover notification maps buttons to answers and only reports a late 
   assert.match(shown[0], /codex · ~\/b asks for p1, which claude · ~\/a is using \(busy: a Maestro test run/);
   assert.equal(await takeoverPrompt(vscode('Keep'), p, () => 'handed to codex · ~/b'), undefined);
   assert.equal(shown.at(-1), 'p1 was already handed to codex · ~/b.');
+});
+
+test('device cleanup carries a reason and task, can be approved once for all calls, and is recorded', async () => {
+  const {CleanupApprovals, cleanupPurposeText} = require('../out/cleanupApprovals');
+  const mem = new Map();
+  const cleanup = new CleanupApprovals({get: (k, d) => mem.has(k) ? mem.get(k) : d, update: async (k, v) => { mem.set(k, v); }});
+  let asked = 0, seen;
+  const s = await start({cleanup, confirm: async () => { asked++; return true; }});
+  try {
+    const client = await connect(s.url);
+    const args = {serial: 'emulator-5554', package: 'com.example.app'};
+    const bare = await client.callTool({name: 'clear_app_data', arguments: args});
+    assert.ok(bare.isError, 'a reason is required');
+    assert.equal(asked, 0);
+    const first = await client.callTool({name: 'clear_app_data', arguments: {...args, reason: 'Reset before the login flow', taskId: 142}});
+    assert.ok(!first.isError);
+    assert.equal(asked, 1, 'asked while there is no standing approval');
+    await cleanup.setStanding(true);
+    const second = await client.callTool({name: 'uninstall_app', arguments: {...args, reason: 'Install a fresh build'}});
+    assert.ok(!second.isError);
+    assert.equal(asked, 1, 'not asked once cleanup is approved for all calls');
+    assert.ok(s.shells.some(c => c.includes('uninstall com.example.app')));
+    // Overwriting a flow is not cleanup: it still asks.
+    const flow = 'appId: com.example.app\n---\n- launchApp\n';
+    await client.callTool({name: 'write_flow', arguments: {path: 'a.yaml', content: flow}});
+    await client.callTool({name: 'write_flow', arguments: {path: 'a.yaml', content: flow}});
+    assert.equal(asked, 2);
+    const history = cleanup.history();
+    assert.deepEqual(history.map(e => [e.tool, e.decision, e.result, e.reason, e.taskId]), [
+      ['uninstall_app', 'standing', 'ok', 'Install a fresh build', undefined],
+      ['clear_app_data', 'allowed', 'ok', 'Reset before the login flow', '142'],
+    ]);
+    assert.ok(history.every(e => e.serial === 'emulator-5554' && e.package === 'com.example.app' && !Number.isNaN(Date.parse(e.at))));
+    assert.match(s.lines.find(l => /uninstall_app/.test(l)), /standing approval · why: Install a fresh build/);
+    assert.equal(cleanupPurposeText({reason: 'x', taskId: '7'}, 'claude · ~/app'), 'Why: x\nFor: task 7\nAsked by: claude · ~/app');
+    await client.close();
+  } finally { await s.server.stop(); }
 });

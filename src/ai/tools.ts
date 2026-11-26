@@ -38,6 +38,9 @@ export interface ToolDeps {
 
 const serial = z.string().regex(/^[\w.:@-]{1,128}$/, 'Use a serial from list_devices.');
 const serials = z.array(serial).min(1).max(50);
+/** Asked of every cleanup call: shown to the user when approving, and kept in the cleanup history. */
+const reason = z.string().min(3).max(500).describe('Why this is needed, in a sentence. The user sees it and it is kept in the cleanup history.');
+const taskId = z.union([z.string().max(60), z.number()]).optional().describe('The task your session is doing this for (e.g. the Work Hub task number), when there is one.');
 const pkg = z.string().regex(/^[A-Za-z]\w*(?:\.[A-Za-z]\w*)+$/, 'Use an Android package ID, like com.example.app.');
 const coord = z.number().int().min(0).max(20000);
 const KEYCODES: Record<string, string> = {
@@ -264,8 +267,8 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
         return text(`${before === undefined ? 'Created' : 'Updated'} ${path}.`);
       })),
 
-    tool('clear_app_data', 'Delete all data of an app on a device (logs the user out, resets it).', { serial, package: pkg }, safely(async ({ serial: s, package: p }) => text(await adb.shell(s, ['pm', 'clear', p]))), destructive),
-    tool('uninstall_app', 'Uninstall an app from a device, deleting its data.', { serial, package: pkg }, safely(async ({ serial: s, package: p }) => text(await adb.run(['-s', s, 'uninstall', p]))), destructive),
+    tool('clear_app_data', 'Delete all data of an app on a device (logs the user out, resets it).', { serial, package: pkg, reason, taskId }, safely(async ({ serial: s, package: p }) => text(await adb.shell(s, ['pm', 'clear', p]))), destructive),
+    tool('uninstall_app', 'Uninstall an app from a device, deleting its data.', { serial, package: pkg, reason, taskId }, safely(async ({ serial: s, package: p }) => text(await adb.run(['-s', s, 'uninstall', p]))), destructive),
   ];
   return deps.lease ? tools.map(def => withLease(def, deps.lease!)) : tools;
 }
