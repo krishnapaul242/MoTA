@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Load apps for real multi-app pressure: `start_load_apps` runs up to 12 small stand-in apps that hold memory and can use CPU and disk, in scenarios sized to the phone's memory (`open-apps`, `heavy-app`, `busy-background`, `squeeze`). `load_apps_status` shows which ones Android killed and why, also for the app under test, and `stop_load_apps` ends it.
 - Storage and memory pressure for Claude and MCP agents: `fill_storage` leaves a phone with little or no free storage and `clear_storage_fill` undoes it; `trim_memory` sends an app a low-memory signal; `kill_background_app` kills an app in the background as Android does when memory is low, then reopens it. `list_devices` shows a fill and who made it, and `release_device` removes the session's own fill.
 - Device cleanup by AI agents (`clear_app_data`, `uninstall_app`) now carries a reason and the task the session is working on, shown when you approve. **Always allow cleanup** approves it once for all later calls, and **MoTA: Device Cleanup Approvals** shows what was cleaned up, when, by which session and why, and turns the standing approval off.
 - Phones are shared safely between AI sessions: a session that changes a phone claims it, other sessions are refused while it is in use or running a test, and idle phones (120 s by default, `mota.lease.idleSeconds`) are handed over at once. `list_devices` and the farm show who uses each phone. Works across VS Code windows.

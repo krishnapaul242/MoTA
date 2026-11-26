@@ -11,6 +11,7 @@ import { discoverFlows, parseFlowHeader } from '../maestro/flows';
 import { describeCommand, latestFlowDir } from '../maestro/results';
 import { MAESTRO_DRIVER, type MaestroRunner, type TestRun } from '../maestro/runner';
 import type { LeaseGate } from '../leases';
+import { describeLoad, loadStatus, loadSummary, planScenario, parseMemory, readLoadMeta, SCENARIOS, startLoad, stopLoad } from '../loadApps';
 import { MOTA_TOOL_RISK, targetSerials } from './policy';
 import { downscalePng } from './png';
 
@@ -33,6 +34,8 @@ export interface ToolDeps {
   onScreenshot: (serial: string, file: string) => void;
   /** A flow was written; `before` is the previous content, if any. */
   onFlowWritten: (file: string, before: string | undefined) => void;
+  /** Folder with the load app APKs and load.json (resources/load). Without it the load-app tools say they are unavailable. */
+  loadAppsDir?: () => string;
   /** Phone leases for this caller. Calls that change a phone claim it for the caller and are refused while someone else uses it. */
   lease?: LeaseGate;
 }
@@ -117,6 +120,9 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
     return { content: [{ type: 'image', data: small.png.toString('base64'), mimeType: 'image/png' }, { type: 'text', text: `${note}${scale}` }] };
   };
 
+  const loadMeta = () => { if (!deps.loadAppsDir) throw new Error('Load apps are not available here.'); return readLoadMeta(deps.loadAppsDir()); };
+  const tryLoadMeta = () => { try { return loadMeta(); } catch { return undefined; } };
+
   const tools = [
     tool('list_devices', 'List connected Android devices with serial, model, state and who is using each. Only "device" state is usable. Other sessions and agents share these phones: prefer free ones, and leave phones in use by someone else alone.', {}, safely(async () => {
       const list = await adb.devices();
@@ -124,7 +130,9 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
       const notes = await deps.lease?.notes();
       // A storage fill left on a phone makes installs and tests fail there, so every session sees it.
       const fills = new Map(await Promise.all(list.filter(d => d.state === 'device').map(async d => [d.serial, await storageState(adb, d.serial).then(describeFill, () => '')] as const)));
-      const lines = list.map(d => `${d.serial} · ${d.model} · ${d.state}${uses?.get(d.serial) ? ` · ${uses.get(d.serial)}` : ''}${fills.get(d.serial) ? ` · ${fills.get(d.serial)}` : ''}`);
+      const meta = tryLoadMeta();
+      const loads = new Map(meta ? await Promise.all(list.filter(d => d.state === 'device').map(async d => [d.serial, await loadSummary(adb, d.serial, meta).then(l => l.text, () => '')] as const)) : []);
+      const lines = list.map(d => `${d.serial} · ${d.model} · ${d.state}${[uses?.get(d.serial), fills.get(d.serial), loads.get(d.serial)].filter(Boolean).map(t => ` · ${t}`).join('')}`);
       return text([notes, lines.length ? lines.join('\n') : 'No devices connected.'].filter(Boolean).join('\n\n'));
     }), read),
 
@@ -148,7 +156,14 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
           if (!state?.fillKb || (state.owner && state.owner !== me)) return '';
           return clearStorageFill(adb, s).then(() => s, () => '');
         }))).filter(Boolean);
-        return text(released.length ? `Released ${released.join(', ')}.${cleared.length ? ` Removed your storage fill on ${cleared.join(', ')}.` : ''}` : 'You held none of those phones.');
+        // The same for load apps this session started.
+        const meta = tryLoadMeta();
+        const stopped = meta ? (await Promise.all(released.map(async s => {
+          const load = await loadSummary(adb, s, meta).catch(() => undefined);
+          if (!load?.text || (load.owner && load.owner !== me)) return '';
+          return stopLoad(adb, s, meta).then(() => s, () => '');
+        }))).filter(Boolean) : [];
+        return text(released.length ? `Released ${released.join(', ')}.${cleared.length ? ` Removed your storage fill on ${cleared.join(', ')}.` : ''}${stopped.length ? ` Stopped your load apps on ${stopped.join(', ')}.` : ''}` : 'You held none of those phones.');
       }), read),
 
     tool('device_info', 'Android version, maker, screen size, battery and the app in the foreground.', { serial }, safely(async ({ serial: s }) => {
@@ -290,6 +305,24 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
       { serial, package: pkg, level: z.enum(TRIM_LEVELS) }, safely(async ({ serial: s, package: p, level }) => text(await trimMemory(adb, s, p, level)))),
     tool('kill_background_app', 'Test recovery from a low-memory kill: sends the app to the background (presses Home), kills its process the way Android does when memory runs out (saved state is kept, unlike a force stop), and reopens it unless relaunch is false. Afterwards check that the app restored its screen and data. Unsaved in-memory state of the app is lost, as on a real phone.',
       { serial, package: pkg, relaunch: z.boolean().default(true) }, safely(async ({ serial: s, package: p, relaunch }) => text(await killInBackground(adb, s, p, relaunch)))),
+
+    tool('start_load_apps', 'Put real multi-app pressure on a phone with MoTA\'s load apps, small stand-ins for other apps. Scenarios, sized to the phone\'s memory: "open-apps" (8 apps the user opened and left, about 4% of memory each), "heavy-app" (one big app left open, 25% of memory), "busy-background" (3 apps doing background work with CPU and disk load, which come back when killed), "squeeze" (takes memory until about leaveAvailableMb is left and keeps it taken). Replaces any load already running. Start it after installing the app under test, then use the app and call load_apps_status to see what Android killed. The first start on a phone installs the load apps, which takes a while. Stop with stop_load_apps when done.',
+      { serial, scenario: z.enum(SCENARIOS).default('open-apps'), apps: z.number().int().min(1).max(12).optional().describe('How many load apps, instead of the scenario\'s number.'), memoryMbEach: z.number().int().min(16).max(8192).optional().describe('Memory each app holds, instead of the scenario\'s share of the phone\'s memory.'), leaveAvailableMb: z.number().int().min(0).max(100_000).optional().describe('For "squeeze": the memory to leave available (300 by default).') },
+      safely(async ({ serial: s, scenario, apps, memoryMbEach, leaveAvailableMb }) => {
+        const meta = loadMeta();
+        // An earlier load is stopped first, so the plan is sized to the memory the phone has without it.
+        await stopLoad(adb, s, meta);
+        const plan = planScenario(scenario, parseMemory(await adb.shell(s, ['cat', '/proc/meminfo'])), meta.count, { apps, memoryMbEach, leaveAvailableMb });
+        let installed: string[] = [];
+        const status = await startLoad(adb, s, deps.loadAppsDir!(), plan, { owner: (await deps.lease?.holder())?.label, scenario, installed: list => { installed = list; } });
+        return text(`${installed.length ? `Installed ${installed.length} load app(s). ` : ''}${describeLoad(status)}`);
+      })),
+    tool('load_apps_status', 'Which load apps are still running and why the others ended (killed for low memory, and so on), with the memory now available. Give package to also see whether the app under test is running and why its last process ended.',
+      { serial, package: pkg.optional() }, safely(async ({ serial: s, package: p }) => text(describeLoad(await loadStatus(adb, s, loadMeta(), p)))), read),
+    tool('stop_load_apps', 'Stop all load apps on a phone and delete what they stored. They stay installed for the next start.', { serial }, safely(async ({ serial: s }) => {
+      const running = await stopLoad(adb, s, loadMeta());
+      return text(running ? `Stopped ${running} load app(s).` : 'No load apps were running.');
+    })),
 
     tool('clear_app_data', 'Delete all data of an app on a device (logs the user out, resets it).', { serial, package: pkg, reason, taskId }, safely(async ({ serial: s, package: p }) => text(await adb.shell(s, ['pm', 'clear', p]))), destructive),
     tool('uninstall_app', 'Uninstall an app from a device, deleting its data.', { serial, package: pkg, reason, taskId }, safely(async ({ serial: s, package: p }) => text(await adb.run(['-s', s, 'uninstall', p]))), destructive),

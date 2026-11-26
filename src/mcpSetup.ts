@@ -50,6 +50,7 @@ export function registerMcp(vscode: typeof VSCode, context: VSCode.ExtensionCont
     return new McpHttpServer({
       adb, input: host.input, runner: host.runner, leases: host.leases, flowsFolder, workspaceRoot,
       screenshotSide: () => config().get<number>('ai.screenshotWidth', 960),
+      loadAppsDir: () => context.asAbsolutePath('resources/load'),
       onFlowWritten: (file, before) => { if (before !== undefined) void backupFlow(workspaceRoot(), flowsFolder(), file, before).then(b => output.appendLine(`  previous version saved to ${b}`)); },
       token: () => token,
       log: line => output.appendLine(`${new Date().toLocaleTimeString()}  ${line}`),

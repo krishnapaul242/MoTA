@@ -17,7 +17,7 @@ npm run package
 
 ## Helper APK
 
-Build the helper with `./helper-apk/build.sh`; this also refreshes `resources/mota-recorder.apk`. Run `npm test`, then `npm run package`. See `helper-apk/README.md` for the APK's standalone workflow. The extension package includes only the built helper APK; helper source, test APKs and the development signing key are excluded.
+Build the helper with `./helper-apk/build.sh`; this also refreshes `resources/mota-recorder.apk`. Run `npm test`, then `npm run package`. See `helper-apk/README.md` for the APK's standalone workflow. Build the load apps with `./load-apk/build.sh` (after the helper, whose signing key it uses); it writes the 12 APKs and `load.json` to `resources/load/`. The extension package includes only the built helper APK and load apps; helper source, test APKs and the development signing key are excluded.
 
 ## Tests
 

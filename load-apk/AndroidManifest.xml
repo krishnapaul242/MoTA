@@ -1,0 +1,12 @@
+<!-- Template: build.sh replaces __PKG__ and __LABEL__ to make one APK per load app. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="__PKG__" android:versionCode="__VERSION_CODE__" android:versionName="__VERSION__">
+    <!-- Target 30 on purpose: a foreground service can then start from the background and needs no type, which a stand-in for "some other app" needs. -->
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="30" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <application android:label="__LABEL__" android:allowBackup="false" android:theme="@android:style/Theme.Material.NoActionBar">
+        <!-- No launcher entry. Only ADB shell (which holds DUMP) can open the screen or reach the control provider. -->
+        <activity android:name="dev.mota.load.LoadActivity" android:exported="true" android:permission="android.permission.DUMP" android:taskAffinity="__PKG__" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <service android:name="dev.mota.load.LoadService" android:exported="false" />
+        <provider android:name="dev.mota.load.ControlProvider" android:authorities="__PKG__.ctl" android:exported="true" android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

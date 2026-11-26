@@ -150,7 +150,7 @@ Claude works through MoTA's own tools:
 - input: tap, swipe, text, keys, launch app, wake
 - Maestro: list, read and write flows, run one flow, start a test run, read results
 - apps: install APK, clear data, uninstall
-- pressure: fill storage until little is free, send a low-memory signal, kill an app in the background and reopen it
+- pressure: fill storage until little is free, send a low-memory signal, kill an app in the background and reopen it, run load apps that take memory, CPU and disk like a phone full of other apps
 - sharing: wait for a phone another session is using, ask you to hand it over, give phones back
 
 Claude can read files in the workspace, but it can write only inside the flows folder. It has no shell and no web access, and it loads none of your other Claude Code settings or connectors.

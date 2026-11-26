@@ -33,6 +33,8 @@ export interface HostDeps {
   defaultModel: () => string;
   effort: () => 'low' | 'medium' | 'high' | 'xhigh';
   screenshotSide: () => number;
+  /** Folder with the load app APKs (resources/load). */
+  loadAppsDir?: () => string;
   store: { get(): StoredConversation[]; set(items: StoredConversation[]): unknown };
   loadSdk: () => Promise<typeof Sdk>;
   input?: InputRouter;
@@ -273,7 +275,7 @@ export class AiHostImpl implements AiHost {
       const workspaceRoot = this.deps.workspaceRoot(), flowsFolder = this.deps.flowsFolder();
       const server = motaServer(sdk, {
         ...(this.deps.leases ? { lease: leaseGate(this.deps.leases, conversationHolder(conv)) } : {}),
-        adb: this.deps.adb, input: this.input, runner: this.runner, flowsFolder: this.deps.flowsFolder, workspaceRoot: this.deps.workspaceRoot, screenshotSide: this.deps.screenshotSide,
+        adb: this.deps.adb, input: this.input, runner: this.runner, flowsFolder: this.deps.flowsFolder, workspaceRoot: this.deps.workspaceRoot, screenshotSide: this.deps.screenshotSide, loadAppsDir: this.deps.loadAppsDir,
         requestPlan: plan => this.requestPlan(conv, turn, plan),
         onScreenshot: (serial, file) => this.lastShot.set(serial, file),
         onFlowWritten: (file, before) => this.onFlowWritten(conv, file, before),
@@ -458,6 +460,7 @@ export function aiHost(context: VSCode.ExtensionContext, adb: Adb): AiHost {
     defaultModel: () => config().get<string>('ai.model', ''),
     effort: () => config().get<'low' | 'medium' | 'high' | 'xhigh'>('ai.effort', 'medium'),
     screenshotSide: () => config().get<number>('ai.screenshotWidth', 960),
+    loadAppsDir: () => context.asAbsolutePath('resources/load'),
     store: { get: () => context.workspaceState.get<StoredConversation[]>('mota.ai.conversations', []), set: items => context.workspaceState.update('mota.ai.conversations', items) },
     loadSdk,
     apiKey: () => Promise.resolve(context.secrets.get(API_KEY_SECRET)),
