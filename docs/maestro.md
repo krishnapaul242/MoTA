@@ -21,6 +21,7 @@ Select devices and flows and run them: every selected flow runs on every selecte
 - Failures show the failed step, its error and a screenshot.
 - A device that disconnects is marked as lost, and its remaining flows are marked as not run.
 - Cancel stops the whole Maestro process tree.
+- While a run is on a phone, AI sessions can't change that phone. The same goes for Maestro commands you start from a terminal. See [Share phones between AI sessions](sharing-phones.md).
 
 ## Results
 

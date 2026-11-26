@@ -49,6 +49,7 @@ nav:
   - AI:
       - Claude assistant: ai-assistant.md
       - MCP for other agents: mcp.md
+      - Share phones between sessions: sharing-phones.md
   - Reference:
       - Settings: settings.md
       - Development: development.md

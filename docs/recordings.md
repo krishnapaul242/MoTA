@@ -37,6 +37,8 @@ Replay checks the device identity, display dimensions, rotation, session complet
 
 Prepare the original starting screen and app state, then choose **Replay on original device** and confirm. An optional target package is launched; this does not reset application data or navigate to the original screen. **Stop** cancels queued actions; an in-flight gesture may finish. `replay-results.json` records completion, cancellation or disconnection and the last reported action index.
 
+While a recording or replay runs, AI sessions can't change that phone. See [Share phones between AI sessions](sharing-phones.md).
+
 ## Where recordings are stored
 
 Recordings default to `.mota/recordings` in the first workspace folder, or extension storage when no folder is open. Set [`mota.recordingsDirectory`](settings.md) to an absolute path to choose another location. Each session contains:

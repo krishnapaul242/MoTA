@@ -42,6 +42,7 @@ MoTA is a desktop VS Code extension for Android and React Native projects. It tu
 - Input recording and replay through the MoTA helper app.
 - Maestro test runs across devices with JUnit-backed results.
 - A Claude assistant, and an MCP server so other agents can use the same tools.
+- Phone sharing between AI sessions: each phone has one session at a time, idle phones are handed over, and you decide when two sessions want the same phone.
 
 ## Requirements
 

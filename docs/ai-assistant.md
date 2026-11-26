@@ -14,8 +14,11 @@ Claude works through MoTA's own tools:
 - **Input:** tap, swipe, text, keys, launch app, wake
 - **Maestro:** list, read and write flows, run one flow, start a test run, read results
 - **Apps:** install APK, clear data, uninstall
+- **Sharing:** wait for a phone another session is using, ask you to hand it over, give phones back
 
 Claude can read files in the workspace, but it can write only inside the flows folder. It has no shell and no web access, and it loads none of your other Claude Code settings or connectors.
+
+Other sessions may be using the same phones. If one is, Claude tells you who has the phone and offers to wait for it or ask for it. When Claude finishes a reply, its phones are free to others. See [Share phones between AI sessions](sharing-phones.md).
 
 ## Permissions
 

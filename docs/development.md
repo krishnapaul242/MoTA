@@ -23,6 +23,18 @@ Build the helper with `./helper-apk/build.sh`; this also refreshes `resources/mo
 
 `npm test` compiles TypeScript and checks discovery parsing, endpoint validation, safe HTML output, literal process arguments, metric conversion, recovery hints, install flag validation, and mocked VS Code interactions for install retries, saved connections and monitor controls. Physical-device QR pairing, installs, logcat and diagnostics require a manual device smoke test.
 
+### Phone sharing
+
+The code for sharing phones between sessions is in:
+
+- `src/leases.ts`: the shared store in `~/.mota/devices.json`. It holds leases, busy work, lines, takeovers and notices, all written under a lock file.
+- `src/ai/caller.ts`: works out which agent process is calling.
+- `src/externalBusy.ts`: finds Maestro and instrumentation tests started outside MoTA.
+- `src/rawCommands.ts`: decides which phones a shell command changes.
+- `src/ai/hooks.ts` and `src/hookSetup.ts`: the Claude Code hooks.
+
+`test/leases.test.js`, `test/externalBusy.test.js` and `test/hooks.test.js` cover them, including the real hook command against a local server. Try it with two real sessions as in [Share phones between AI sessions](sharing-phones.md#try-it).
+
 ## Docs
 
 This site is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) from the `docs/` folder and deployed to GitHub Pages by `.github/workflows/docs.yml` on every push to `main` that touches the docs. To preview locally:

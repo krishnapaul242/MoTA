@@ -11,6 +11,8 @@ Click a ready device in the Devices list, or run **MoTA: Device Controls**. The 
 
 The live view streams the device screen. By default it uses scrcpy; set [`mota.liveEngine`](settings.md) to `screenrecord` to fall back to Android's built-in recorder.
 
+While you tap, type or press keys here, AI sessions using this phone are warned that you are using it. They are not stopped. See [Share phones between AI sessions](sharing-phones.md#when-you-use-a-phone-yourself).
+
 ## Capture
 
 - Capture screenshots without a helper, copy them as PNG images, or save them.
