@@ -90,6 +90,7 @@ const body = `
   </div>
  </div>
  <p class="errline" id="error" role="alert"></p>
+ <div class="card card-pad row" id="pressBar" hidden style="background:var(--vscode-inputValidation-warningBackground);border-color:var(--vscode-inputValidation-warningBorder)"><svg data-i="activity"></svg><span id="pressBarText" style="flex:1;min-width:0"></span><button class="btn btn-danger btn-sm" data-top="stop-pressure">Stop all pressure</button></div>
  <div class="card card-pad row" id="testBanner" hidden style="background:var(--mota-live-bg);border-color:var(--vscode-focusBorder)"></div>
  <div id="view"></div>
  <div class="floating-bar" id="selbar" role="toolbar" aria-label="Actions for selected devices" hidden>
@@ -203,7 +204,11 @@ const sub=d=>{const i=d.info||{};return[i.manufacturer,i.android&&'Android '+i.a
 const connChip=d=>'<span class="chip">'+icon(d.kind==='USB'?'usb':d.kind==='Wi-Fi'?'wifi':'phone')+esc(d.kind)+'</span>';
 function batteryChip(d){const i=d.info||{};if(i.battery==null)return'';const low=i.battery<=20&&!i.charging;return'<span class="chip'+(low?' warn':'')+'">'+icon(i.charging?'bolt':'battery')+i.battery+'%'+(i.charging?' · charging':low?' · low':'')+'</span>';}
 const useChip=d=>d.use?'<span class="chip use '+esc(d.use.state)+'" title="'+esc(d.use.title)+'">'+icon(d.use.state==='busy'?'play':'activity')+esc(d.use.text)+'</span>':'';
-function chips(d){const i=d.info||{};return useChip(d)+connChip(d)+(online(d)?batteryChip(d)+(i.width?'<span class="chip">'+i.width+' × '+i.height+'</span>':''):'')+(i.managed?'<span class="chip">'+icon('shield')+'Managed</span>':'');}
+const pressChip=d=>d.pressure?[d.pressure.fill,d.pressure.load].filter(Boolean).map(t=>'<span class="chip warn" title="Artificial pressure from a test. Stop it when done.">'+icon('activity')+esc(t)+'</span>').join(''):'';
+function renderPressBar(){const on=devices.filter(d=>d.pressure);$('pressBar').hidden=!on.length;if(!on.length)return;
+ $('pressBarText').textContent='Artificial pressure is on '+(on.length===1?on[0].model:on.length+' phones')+': '+on.map(d=>(on.length>1?d.model+' — ':'')+[d.pressure.fill,d.pressure.load].filter(Boolean).join(', ')).join(' · ');
+ document.querySelector('[data-top=stop-pressure]').disabled=false;}
+function chips(d){const i=d.info||{};return useChip(d)+pressChip(d)+connChip(d)+(online(d)?batteryChip(d)+(i.width?'<span class="chip">'+i.width+' × '+i.height+'</span>':''):'')+(i.managed?'<span class="chip">'+icon('shield')+'Managed</span>':'');}
 function stageInner(d){
  if(online(d))return frames[d.serial]?'<img src="'+frames[d.serial]+'" alt="Screen of '+esc(d.model)+'">':'<div class="msg">'+icon(frameErrors[d.serial]?'warn':'phone')+'<span>'+esc(frameErrors[d.serial]||($('live').checked?'Loading screen…':'Live screens are off'))+'</span></div>';
  if(d.state==='unauthorized')return'<div class="msg">'+icon('warn','style="color:var(--vscode-editorWarning-foreground)"')+'<b>Waiting for authorization</b><span>Unlock the phone and tap <b>Allow</b> on the USB debugging prompt.</span></div>';
@@ -277,6 +282,7 @@ document.addEventListener('click',e=>{const t=e.target;
  if(b.dataset.top==='add'){openAdd();return;}
  if(b.dataset.top==='dismiss'){$('notice').hidden=true;return;}
  if(b.dataset.top==='tests'){api.postMessage({action:'open-tests'});return;}
+ if(b.dataset.top==='stop-pressure'){b.disabled=true;$('pressBarText').textContent='Stopping pressure on all phones…';api.postMessage({action:'stop-pressure'});return;}
  if(b.dataset.top==='hide-tests'){testActive=null;$('testBanner').hidden=true;render();return;}
  if(b.dataset.top==='more'){if($('moreMenu').hidden)placeMenu($('moreMenu'),b);else closeMenus();return;}
  if(b.dataset.tab){showTab(b.dataset.tab);return;}
@@ -365,7 +371,7 @@ window.addEventListener('message',e=>{const m=e.data;if(!m||typeof m.type!=='str
 // ---- host messages
 window.addEventListener('message',e=>{const m=e.data;if(!m||!m.kind)return;
  if(m.kind==='devices'){$('error').textContent=m.error?'ADB unavailable: '+m.error:'';const json=JSON.stringify(m.devices);
-  devices=m.devices;for(const s of [...selected])if(!devices.some(d=>d.serial===s&&online(d)))selected.delete(s);if(json!==last){last=json;render();if(focus){const d=device(focus);if(d)renderInfo(d);}}}
+  devices=m.devices;for(const s of [...selected])if(!devices.some(d=>d.serial===s&&online(d)))selected.delete(s);if(json!==last){last=json;render();renderPressBar();if(focus){const d=device(focus);if(d)renderInfo(d);}}}
  else if(m.kind==='frame'){frames[m.serial]=m.src;delete frameErrors[m.serial];
   const st=document.querySelector('.dev[data-serial="'+CSS.escape(m.serial)+'"] .stage');
   if(st){const i=st.querySelector('img');if(i)i.src=m.src;else{const msg=st.querySelector('.msg');if(msg)msg.outerHTML='<img src="'+m.src+'" alt="Screen">';}}

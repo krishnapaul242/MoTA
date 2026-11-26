@@ -156,6 +156,11 @@
         "shortTitle": "Connect AI agents"
       },
       {
+        "command": "mota.stopPressure",
+        "title": "MoTA: Stop All Pressure (Free Storage and Memory)",
+        "shortTitle": "Stop all pressure"
+      },
+      {
         "command": "mota.cleanupApprovals",
         "title": "MoTA: Device Cleanup Approvals (AI Agents)"
       },

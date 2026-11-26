@@ -1,3 +1,4 @@
+import { describeStopped, stopAllPressure, tryLoadMeta } from './pressureControl';
 import * as vscode from 'vscode';
 import * as QRCode from 'qrcode';
 import { randomBytes, randomInt } from 'node:crypto';
@@ -101,6 +102,17 @@ export function activate(context: vscode.ExtensionContext) {
   registerMcp(vscode, context, adb);
   registerAiAuth(vscode, context);
   command('mota.refresh', refresh);
+  // The one switch that ends all artificial pressure: removes storage fills and stops load apps on every connected phone, whoever started them.
+  command('mota.stopPressure', async () => {
+    const ready = (await adb.devices()).filter(d => d.state === 'device');
+    if (!ready.length) { void vscode.window.showInformationMessage('No phones are connected, so there is no pressure to stop.'); return; }
+    const meta = tryLoadMeta(context.asAbsolutePath('resources/load'));
+    const results = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Stopping pressure on ${ready.length} phone${ready.length === 1 ? '' : 's'}…` },
+      () => Promise.all(ready.map(async d => ({ d, s: await stopAllPressure(adb, d.serial, meta) }))));
+    const acted = results.filter(r => r.s.freedKb || r.s.stoppedApps || r.s.errors.length), failed = results.some(r => r.s.errors.length);
+    const text = acted.length ? `Pressure stopped. ${acted.map(r => `${r.d.model}: ${describeStopped(r.s)}`).join('; ')}.` : `No pressure was on any of the ${ready.length} connected phone${ready.length === 1 ? '' : 's'}.`;
+    void (failed ? vscode.window.showWarningMessage(text) : vscode.window.showInformationMessage(text));
+  });
   async function deviceResults(title: string, targets: Device[], action: (d: Device) => Promise<string>) {
     if (!targets.length) return;
     const panel = vscode.window.createWebviewPanel('mota.actions',`MoTA · ${title}`,vscode.ViewColumn.One,{enableScripts:true});

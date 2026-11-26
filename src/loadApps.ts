@@ -64,8 +64,9 @@ export function planScenario(scenario: Scenario, memory: Memory, max: number, o:
     // Apps working in the background (sync, playback, uploads): they use CPU and disk too, and come back when killed.
     case 'busy-background': return Array.from({ length: count(3) }, () => ({ memMb: each(share(0.05)), state: 'service' as const, cpuThreads: 2, cpuPercent: 30, ioMbps: 5, respawn: true }));
     // Take memory until about leaveAvailableMb is left, and hold on to it: services that come back when killed.
+    // Apps of about 256 MB are added one at a time (see startLoad's untilAvailableKb), so the phone is not pushed past the target at once.
     case 'squeeze': {
-      const n = count(Math.min(max, 6)), takeMb = Math.max(0, memory.availableKb / 1024 - (o.leaveAvailableMb ?? 300));
+      const takeMb = Math.max(0, memory.availableKb / 1024 - (o.leaveAvailableMb ?? 300)), n = count(Math.ceil(takeMb / 256));
       return Array.from({ length: n }, () => ({ memMb: each(Math.max(16, Math.round(takeMb / n / 16) * 16)), state: 'service' as const, randomPercent: 100, respawn: true }));
     }
   }
@@ -135,7 +136,11 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const pidOf = async (adb: Adb, serial: string, pkg: string) => (await adb.shell(serial, ['pidof', pkg]).catch(() => '')).trim().split(/\s+/)[0] ?? '';
 const forEachPackage = (packages: string[], command: string) => `for p in ${packages.join(' ')}; do ${command}; done`;
 
-export interface StartOptions { owner?: string; scenario?: string; wait?: (ms: number) => Promise<void>; installed?: (packages: string[]) => void }
+export interface StartOptions {
+  owner?: string; scenario?: string; wait?: (ms: number) => Promise<void>; installed?: (packages: string[]) => void;
+  /** Stop adding apps once this little memory is available, or once Android has started killing them: more would only be killed too. */
+  untilAvailableKb?: number;
+}
 
 /**
  * Stops any earlier load, installs what is missing, and starts one load app per entry of `plan`, oldest first, so the first
@@ -150,10 +155,17 @@ export async function startLoad(adb: Adb, serial: string, dir: string, plan: App
   options.installed?.(installed);
   const startedAt = (await adb.shell(serial, ['date', shellQuote('+%Y-%m-%d %H:%M:%S')])).trim();
   const apps = plan.map((load, i) => ({ ...load, package: loadPackage(meta, i + 1) }));
-  const record: LoadRecord = { owner: options.owner ?? '', scenario: options.scenario ?? 'custom', startedAt, apps };
-  await adb.shell(serial, [`echo ${shellQuote(JSON.stringify(record))} > ${LOAD_RECORD_PATH}`]);
+  const record: LoadRecord = { owner: options.owner ?? '', scenario: options.scenario ?? 'custom', startedAt, apps: [] };
+  const save = () => adb.shell(serial, [`echo ${shellQuote(JSON.stringify(record))} > ${LOAD_RECORD_PATH}`]);
   for (const app of apps) {
     const { package: pkg, ...load } = app;
+    if (options.untilAvailableKb !== undefined && record.apps.length) {
+      const out = await adb.shell(serial, [`cat /proc/meminfo; echo ==pids; ${forEachPackage(record.apps.map(a => a.package), 'pidof $p >/dev/null || echo dead')}; true`]);
+      if (parseMemory(out).availableKb <= options.untilAvailableKb || /==pids[\s\S]*dead/.test(out)) break;
+    }
+    // Recorded before it starts, so a load that is interrupted half-way is still seen and can be stopped.
+    record.apps.push(app);
+    await save();
     try {
       // A recent app is one the user opened: its screen comes up first, and the next app covers it.
       if (load.state === 'recent') await adb.shell(serial, ['am', 'start', '-n', `${pkg}/dev.mota.load.LoadActivity`]);
@@ -168,7 +180,7 @@ export async function startLoad(adb: Adb, serial: string, dir: string, plan: App
     } catch { /* reported as not running by the status below */ }
   }
   // Home, so the last app opened is in the background like the others; a moment lets Android settle its place.
-  if (apps.some(a => a.state === 'recent')) { await adb.shell(serial, ['input', 'keyevent', 'KEYCODE_HOME']); await wait(1500); }
+  if (record.apps.some(a => a.state === 'recent')) { await adb.shell(serial, ['input', 'keyevent', 'KEYCODE_HOME']); await wait(1500); }
   return loadStatus(adb, serial, meta);
 }
 
@@ -213,13 +225,13 @@ const adjText = (adj?: number) => adj === undefined ? '' : ADJ.find(([limit]) =>
 const mb = (kb: number) => `${Math.round(kb / 1024)} MB`;
 
 /** "load apps: 5 of 8 running by X", or '' when no load was started on the phone. */
-export async function loadSummary(adb: Adb, serial: string, meta: LoadMeta): Promise<{ text: string; owner: string }> {
+export async function loadSummary(adb: Adb, serial: string, meta: LoadMeta): Promise<{ text: string; owner: string; running: number; total: number; scenario: string }> {
   const out = await adb.shell(serial, [`cat ${LOAD_RECORD_PATH} 2>/dev/null || exit 0; echo; echo ==pids; ${forEachPackage(loadPackages(meta), 'pidof $p >/dev/null && echo $p')}; true`]);
   const [head, pids = ''] = out.split('==pids');
   try {
     const record = JSON.parse(head.trim()) as LoadRecord, running = record.apps.filter(a => new RegExp(`^${a.package.replace(/\./g, '\\.')}\\s*$`, 'm').test(pids)).length;
-    return { text: `load apps: ${running} of ${record.apps.length} running${record.owner ? ` by ${record.owner}` : ''}`, owner: record.owner };
-  } catch { return { text: '', owner: '' }; }
+    return { text: `load apps: ${running} of ${record.apps.length} running${record.owner ? ` by ${record.owner}` : ''}`, owner: record.owner, running, total: record.apps.length, scenario: record.scenario };
+  } catch { return { text: '', owner: '', running: 0, total: 0, scenario: '' }; }
 }
 
 /** The status as text for an agent or the user. */

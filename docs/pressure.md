@@ -2,6 +2,19 @@
 
 Claude, and other agents over [MCP](mcp.md), can put a phone under pressure to see how your app copes: almost no free storage, a low-memory signal, or being killed in the background. None of it needs root.
 
+## See and stop pressure
+
+Pressure is artificial, and a phone left full or busy makes installs and other tests fail. MoTA shows it wherever you look at phones, and one switch ends it.
+
+| Where | What you see | What you can do |
+|---|---|---|
+| Device farm | A warning chip on each phone under pressure, and a bar at the top naming the phones | **Stop all pressure** on every connected phone |
+| Device controls | A warning banner on every tab, and a **Pressure** card on the **Diagnostics** tab | Fill storage or remove the fill, start or stop load apps, **Stop all pressure** on this phone |
+| Command Palette | — | **MoTA: Stop All Pressure (Free Storage and Memory)** |
+| Agents | `list_devices` shows the fill and the load apps | `stop_pressure` ends both on one phone |
+
+**Stop all pressure** removes the storage fill and stops every load app, whoever started them, and reports what each phone got back, for example "freed 75 GB of storage, stopped 3 load apps". The pages refresh the pressure state every 15 seconds.
+
 ## Storage pressure
 
 Ask for it in plain words, for example "leave 200 MB free on the Nokia and run the download flow". The agent uses two tools:
@@ -56,6 +69,7 @@ The signal and the background kill test one app's reaction. Load apps put the wh
 | `start_load_apps` | Starts a scenario, replacing any load already running. The first start on a phone installs the load apps. |
 | `load_apps_status` | Shows which load apps still run, why the others ended, and the memory available. With `package`, the same for your app. |
 | `stop_load_apps` | Stops all load apps and deletes what they stored. They stay installed. |
+| `stop_pressure` | Ends everything on a phone at once: the storage fill and the load apps. |
 
 ### Scenarios
 
@@ -66,7 +80,7 @@ Sizes follow the phone's memory, so a scenario means the same on a 3 GB and a 12
 | `open-apps` | 8 in recents, about 4% of memory each | Apps the user opened and left |
 | `heavy-app` | 1 in recents, 25% of memory | A game left open |
 | `busy-background` | 3 doing background work, 5% of memory each, with CPU and disk load | Sync, playback or uploads running; they come back when killed |
-| `squeeze` | 6 doing background work, sized to leave about `leaveAvailableMb` (300 by default) | Memory stays taken however many apps Android kills |
+| `squeeze` | Apps of about 256 MB doing background work, added one at a time until about `leaveAvailableMb` (300 by default) is left or Android starts killing them | Memory stays taken: killed apps come back within about 10 seconds |
 
 `apps` and `memoryMbEach` change the number of load apps and the memory each holds.
 
@@ -85,13 +99,14 @@ com.android.settings: not running; killed by Android for low memory at 16:32:56.
 
 - **Kill order:** load apps are opened oldest first, so the first is the first Android kills. Your app competes with them by how recently it was used.
 - **Exit reasons:** these come from Android's own record (Android 11 and later). Phones that do not report low-memory kills show them as "killed by a signal".
+- **Coming back:** Android does not reliably restart an app it killed for low memory, so load apps that are meant to come back wake themselves with an alarm every 10 seconds, as real apps do with alarms, jobs and push messages.
 - **Available memory is approximate:** Android compresses and swaps memory, so the amount left is near the target, not exact.
 
 ### Cleaning up
 
 - `list_devices` shows a running load and the session that started it.
 - `release_device` stops the load the releasing session started.
-- A load is not stopped when its phone is handed to another session for being idle, or when the phone is unplugged. Any session can stop it with `stop_load_apps`.
+- A load is not stopped when its phone is handed to another session for being idle, or when the phone is unplugged. Any session can stop it with `stop_load_apps` or `stop_pressure`, and you can with **Stop all pressure**.
 
 ### Phones that refuse the load apps
 

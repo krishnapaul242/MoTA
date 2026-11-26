@@ -17,6 +17,9 @@ import { validPackage } from './apk';
 import { launchApp } from './deviceActions';
 import { gestureParams, InputRouter } from './helperInput';
 import { sharedLeases } from './ai/host';
+import { clearStorageFill, fillStorage, formatKb } from './pressure';
+import { planScenario, parseMemory, SCENARIOS, startLoad, stopLoad, type Scenario } from './loadApps';
+import { describeStopped, pressureDetail, pressureState, stopAllPressure, tryLoadMeta } from './pressureControl';
 
 /** Page actions that are the user driving the phone; agents get a warning while they happen. */
 export const USER_INPUT = new Set(['touch', 'scroll', 'gesture', 'key', 'text', 'tap', 'swipe', 'app-launch', 'app-stop', 'deep-link', 'launch']);
@@ -159,6 +162,7 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
         case 'captures':await this.sendCaptures();return true;
         case 'select-capture':{const path=this.capturePath(m.name);if(!path)return true;if(path.endsWith('.mp4'))this.lastVideo=path;else this.lastImage=path;this.state();return true;}
         case 'diag':this.post({kind:'diag',diag:await this.diagnostics()});return true;
+        case 'pressure':case 'pressure-fill':case 'pressure-clear':case 'pressure-load':case 'pressure-stop-load':case 'pressure-stop-all':await this.pressure(m);return true;
         case 'ls':{const path=String(m.path||'');if(!path.startsWith('/')||/[\x00\r\n]/.test(path)||path.length>4096)throw new Error('Enter an absolute folder path.');
           try{this.post({kind:'files',path,entries:parseLs(await shellLiteral(adb,serial,['ls','-la',path.replace(/\/?$/,'/')]))});}catch(e){this.post({kind:'files',path,entries:[],error:e instanceof Error?e.message:String(e)});}return true;}
         case 'logs-start':await this.startLogs(String(m.level||'I'),String(m.package||''));return true;
@@ -208,6 +212,29 @@ export function registerDevicePage(vscode:typeof VSCode,context:VSCode.Extension
         }
       }catch{/* no captures yet */}
       items.sort((a,b)=>b.time-a.time);this.post({kind:'captures',items:items.slice(0,40),select});
+    }
+    /** Pressure controls: does what was asked, then always reports what is on the phone now. */
+    private async pressure(m:any){
+      const serial=this.device.serial,dir=context.asAbsolutePath('resources/load'),meta=tryLoadMeta(dir),owner='you (VS Code)';
+      let note='',error='';
+      try{
+        if(m.action==='pressure-fill'){const r=await fillStorage(adb,serial,Number(m.leaveFreeMb),owner);note=`Storage filled: ${formatKb(r.after.freeKb)} left free.`;}
+        else if(m.action==='pressure-clear'){const r=await clearStorageFill(adb,serial);note=r.freedKb?`Removed the fill: ${formatKb(r.freedKb)} given back.`:'There was no storage fill.';}
+        else if(m.action==='pressure-load'){
+          if(!meta)throw new Error('Load apps are not part of this build.');
+          const scenario=String(m.scenario) as Scenario;if(!SCENARIOS.includes(scenario))throw new Error('Unknown scenario.');
+          await stopLoad(adb,serial,meta);
+          const plan=planScenario(scenario,parseMemory(await adb.shell(serial,['cat','/proc/meminfo'])),meta.count);
+          const status=await startLoad(adb,serial,dir,plan,{owner,scenario,...(scenario==='squeeze'?{untilAvailableKb:300*1024}:{})});
+          note=`${scenario}: ${status.apps.filter(a=>a.alive).length} of ${status.apps.length} load apps running.`;
+        }
+        else if(m.action==='pressure-stop-load'){if(meta){const n=await stopLoad(adb,serial,meta);note=n?`Stopped ${n} load app${n===1?'':'s'}.`:'No load apps were running.';}}
+        else if(m.action==='pressure-stop-all'){const s=await stopAllPressure(adb,serial,meta);note=describeStopped(s);note=note.charAt(0).toUpperCase()+note.slice(1)+'.';}
+      }catch(e){error=e instanceof Error?e.message:String(e);}
+      const state=await pressureState(adb,serial,meta);
+      const detail=state.load?await pressureDetail(adb,serial,meta).catch(()=>''):'';
+      this.post({kind:'pressure',active:state.active,fill:state.fill,load:state.load,detail,note,error,hasLoadApps:!!meta,
+        free:state.storage?formatKb(state.storage.freeKb):'',total:state.storage?formatKb(state.storage.totalKb):''});
     }
     private async diagnostics(){
       const serial=this.device.serial;

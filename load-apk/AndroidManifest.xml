@@ -7,6 +7,7 @@
         <!-- No launcher entry. Only ADB shell (which holds DUMP) can open the screen or reach the control provider. -->
         <activity android:name="dev.mota.load.LoadActivity" android:exported="true" android:permission="android.permission.DUMP" android:taskAffinity="__PKG__" android:configChanges="orientation|screenSize|keyboardHidden" />
         <service android:name="dev.mota.load.LoadService" android:exported="false" />
+        <receiver android:name="dev.mota.load.ReviveReceiver" android:exported="false" />
         <provider android:name="dev.mota.load.ControlProvider" android:authorities="__PKG__.ctl" android:exported="true" android:permission="android.permission.DUMP" />
     </application>
 </manifest>

@@ -10,7 +10,7 @@ export const MOTA_TOOL_RISK: Record<string, Risk> = {
   list_flows: 'read', read_flow: 'read', run_results: 'read', propose_plan: 'read', acquire_device: 'read', release_device: 'read', load_apps_status: 'read',
   tap: 'input', swipe: 'input', type_text: 'input', press_key: 'input', launch_app: 'input', wake: 'input',
   run_flow: 'input', trim_memory: 'input', kill_background_app: 'input',
-  install_apk: 'change', start_test_run: 'change', write_flow: 'change', fill_storage: 'change', clear_storage_fill: 'change', start_load_apps: 'change', stop_load_apps: 'change',
+  install_apk: 'change', start_test_run: 'change', write_flow: 'change', fill_storage: 'change', clear_storage_fill: 'change', start_load_apps: 'change', stop_load_apps: 'change', stop_pressure: 'change',
   clear_app_data: 'data-loss', uninstall_app: 'data-loss',
 };
 

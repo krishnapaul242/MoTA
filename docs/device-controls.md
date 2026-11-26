@@ -27,6 +27,7 @@ Copy works through the webview image clipboard with a native desktop fallback; L
 - App controls support launch, force stop, install, clear data and uninstall; destructive presets ask for confirmation.
 - Device inputs include navigation, volume, wake/sleep, taps, swipes and basic text.
 - Diagnostics reuse [logcat and live stats](logs-and-performance.md).
+- The **Pressure** card on the Diagnostics tab fills storage and runs load apps, and a banner on every tab warns while pressure is on. See [Test under storage and memory pressure](pressure.md#see-and-stop-pressure).
 - File actions push/pull a chosen file.
 - The advanced runner accepts Android shell commands or device-scoped ADB arguments; it always fixes the selected serial and never invokes a host shell. An interactive device shell is available for long-running work.
 

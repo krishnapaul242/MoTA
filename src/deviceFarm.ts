@@ -16,6 +16,7 @@ import { gestureParams, InputRouter } from './helperInput';
 import { AdbConsole } from './adbConsole';
 import { sharedLeases } from './ai/host';
 import { ago, type DeviceUse } from './leases';
+import { pressureState, tryLoadMeta } from './pressureControl';
 import { HelperDownloadServer, lanAddresses, parseDeviceOwner, provisioningPayload, readHelperMetadata } from './provisioning';
 
 export interface FarmInfo { manufacturer: string; android: string; sdk: string; width: number | null; height: number | null; battery: number | null; charging: boolean; managed: boolean }
@@ -79,7 +80,7 @@ export async function applyFarmDefaults(adb: Adb, serial: string) {
 }
 
 const KEYS = ['back', 'home', 'recents', 'volumeUp', 'volumeDown', 'wake', 'sleep'];
-const THUMBNAIL_MS = 5000, LIST_MS = 3000, INFO_MS = 60000;
+const THUMBNAIL_MS = 5000, LIST_MS = 3000, INFO_MS = 60000, PRESSURE_MS = 15000;
 
 /** What the farm shows about who uses a phone, or undefined when it is free. */
 export function farmUse(use: DeviceUse | undefined, now: number): { state: 'active' | 'idle' | 'busy' | 'free'; text: string; title: string } | undefined {
@@ -113,6 +114,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
     readonly panel: VSCode.WebviewPanel;
     private devices = new Map<string, Device>();
     private info = new Map<string, { at: number; value: FarmInfo }>();
+    private pressure = new Map<string, { at: number; value: { fill: string; load: string } | undefined }>();
     private lastFrame = new Map<string, number>();
     private capturing = new Set<string>();
     private focus: string | undefined;
@@ -156,8 +158,14 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         await Promise.all(found.filter(d => d.state === 'device' && now - (this.info.get(d.serial)?.at || 0) > INFO_MS).map(async d => {
           try { this.info.set(d.serial, { at: now, value: parseFarmInfo(await adb.shell(d.serial, [FARM_INFO_SCRIPT])) }); } catch { /* shown without details */ }
         }));
+        // Artificial pressure (a storage fill, load apps) is shown on every card, so a phone left full or busy is noticed.
+        const meta = tryLoadMeta(context.asAbsolutePath('resources/load'));
+        await Promise.all(found.filter(d => d.state === 'device' && now - (this.pressure.get(d.serial)?.at || 0) > PRESSURE_MS).map(async d => {
+          const p = await pressureState(adb, d.serial, meta).catch(() => undefined);
+          this.pressure.set(d.serial, { at: now, value: p?.active ? { fill: p.fill, load: p.load } : undefined });
+        }));
         const uses = await sharedLeases(context, adb)?.use(found.map(d => d.serial)).catch(() => undefined);
-        this.post({ kind: 'devices', devices: all.map(d => ({ ...d, kind: connectionKind(d.serial), info: this.info.get(d.serial)?.value, use: uses && farmUse(uses.get(d.serial), now) })) });
+        this.post({ kind: 'devices', devices: all.map(d => ({ ...d, kind: connectionKind(d.serial), info: this.info.get(d.serial)?.value, use: uses && farmUse(uses.get(d.serial), now), pressure: d.state === 'device' ? this.pressure.get(d.serial)?.value : undefined })) });
       } catch (e) {
         this.post({ kind: 'devices', devices: [], error: e instanceof Error ? e.message : String(e) });
       } finally { this.listing = false; this.lastList = Date.now(); }
@@ -233,6 +241,7 @@ export function registerDeviceFarm(vscode: typeof VSCode, context: VSCode.Extens
         case 'provision-start': return this.provisionStart(m);
         case 'provision-stop': this.provisioning?.close('stopped'); return;
         case 'open-tests': await vscode.commands.executeCommand('mota.tests'); return;
+        case 'stop-pressure': await vscode.commands.executeCommand('mota.stopPressure'); this.pressure.clear(); this.lastList = 0; await this.list(); return;
         case 'copy': await vscode.env.clipboard.writeText(String(m.text ?? '').slice(0, 500)); this.notice('Copied to the clipboard.'); return;
         case 'packages': {
           const d = this.online(m.serial); if (!d) return;

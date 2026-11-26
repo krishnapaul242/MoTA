@@ -3,8 +3,8 @@
 # (dev.mota.load.a01, a02, …), so Android treats them as separate apps. Offline; uses installed SDK tools and a JDK.
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION=0.1.0
-VERSION_CODE=1
+VERSION=0.1.1
+VERSION_CODE=2
 COUNT="${COUNT:-12}"
 PREFIX=dev.mota.load.a
 SDK_PATH="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"

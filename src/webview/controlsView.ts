@@ -73,6 +73,7 @@ function body(d: { serial: string; model: string }) {
   <button class="icon-btn" data-menu="device" title="More device actions" aria-label="More device actions" aria-haspopup="menu"><svg data-i="more"></svg></button>
  </div>
 </header>
+<div id="pressBanner" role="status" style="display:none;align-items:center;gap:10px;padding:8px 16px;background:var(--vscode-inputValidation-warningBackground);border-bottom:1px solid var(--vscode-inputValidation-warningBorder)"><svg data-i="activity"></svg><span id="pressBannerText" style="flex:1;min-width:0"></span><button class="btn btn-secondary btn-sm" data-tab="diag">Details</button><button class="btn btn-danger btn-sm" data-press="stop-all">Stop all pressure</button></div>
 <div class="layout">
  <section class="left" aria-label="Live screen">
   <div class="screenrow">
@@ -163,6 +164,15 @@ function body(d: { serial: string; model: string }) {
    <div class="row" style="justify-content:space-between"><h2>Device health</h2><div class="row"><button class="btn btn-ghost btn-sm" data-action="diag"><svg data-i="refresh"></svg>Refresh</button><button class="btn btn-secondary" data-action="stats"><svg data-i="activity"></svg>Open live monitor</button></div></div>
    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px" id="diagCards"></div>
    <div class="card card-pad"><dl class="kv" id="diagKv"><dt>Loading</dt><dd>…</dd></dl></div>
+   <div class="card card-pad" id="pressCard" style="display:flex;flex-direction:column;gap:10px">
+    <div class="row" style="justify-content:space-between"><h2>Pressure</h2><div class="row"><button class="btn btn-ghost btn-sm" data-press="refresh"><svg data-i="refresh"></svg>Refresh</button><button class="btn btn-danger btn-sm" data-press="stop-all" disabled>Stop all pressure</button></div></div>
+    <div class="small muted" id="pressSummary">Checking…</div>
+    <div class="row" style="justify-content:space-between;gap:12px"><div style="min-width:0"><h3>Storage</h3><div class="small muted" id="pressStorage">—</div></div>
+     <div class="row"><label class="small muted" for="pressLeave">Leave free (MB)</label><input class="input" id="pressLeave" type="number" min="0" step="50" value="200" style="width:90px"><button class="btn btn-secondary btn-sm" data-press="fill">Fill storage</button><button class="btn btn-ghost btn-sm" data-press="clear" id="pressClear" disabled>Remove fill</button></div></div>
+    <div class="row" style="justify-content:space-between;gap:12px"><div style="min-width:0"><h3>Memory, CPU and disk</h3><div class="small muted" id="pressLoad">—</div></div>
+     <div class="row"><select class="input" id="pressScenario" aria-label="Load scenario"><option value="open-apps">Open apps: 8 apps left in recents</option><option value="heavy-app">Heavy app: one big app left open</option><option value="busy-background">Busy background: 3 apps using CPU and disk</option><option value="squeeze">Squeeze: take memory until about 300 MB is left</option></select><button class="btn btn-secondary btn-sm" data-press="load">Start load apps</button><button class="btn btn-ghost btn-sm" data-press="stop-load" id="pressStopLoad" disabled>Stop</button></div></div>
+    <pre class="output" id="pressDetail" hidden tabindex="0"></pre>
+   </div>
    <div><h2 class="section-title" style="margin-bottom:8px">Raw dumps</h2><div class="row">${[['properties', 'getprop'], ['battery', 'dumpsys battery'], ['memory', 'dumpsys meminfo'], ['activities', 'Activities'], ['display', 'Display size']].map(([p, l]) => `<button class="btn btn-secondary btn-sm" data-action="preset" data-preset="${p}" data-out="diag" data-busy>${l}</button>`).join('')}</div></div>
    <div><h2 class="section-title" style="margin-bottom:8px">Settings on the device</h2><div class="row">${[['settings', 'Settings'], ['wifi', 'Wi-Fi'], ['bluetooth', 'Bluetooth']].map(([p, l]) => `<button class="btn btn-secondary btn-sm" data-action="preset" data-preset="${p}" data-busy>${l}</button>`).join('')}<button class="btn btn-secondary btn-sm" data-action="awake">Keep awake…</button></div></div>
    <pre class="output" id="diagOut" hidden tabindex="0"></pre>
@@ -276,6 +286,9 @@ document.addEventListener('click',e=>{const t=e.target;const b=t.closest('button
  if(b.dataset.dir){ls(b.dataset.dir);return;}
  if(b.dataset.file){fileSel=b.dataset.file;$('pullBtn').disabled=false;document.querySelectorAll('#files tr').forEach(r=>r.setAttribute('aria-selected',String(r.dataset.path===fileSel)));return;}
  if(b.dataset.key){liveKey(b.dataset.key);return;}
+ if(b.dataset.press){if(b.disabled)return;const k=b.dataset.press;if(k==='refresh'){send('pressure');return;}
+  document.querySelectorAll('[data-press]').forEach(x=>x.disabled=true);$('pressSummary').textContent=k==='load'?'Starting load apps… the first time on a phone they are installed, which takes a while.':'Working…';
+  if(k==='fill')send('pressure-fill',{leaveFreeMb:Number($('pressLeave').value)});else if(k==='load')send('pressure-load',{scenario:$('pressScenario').value});else send('pressure-'+k);return;}
  const action=b.dataset.action;if(!action||b.disabled)return;
  $('menu').hidden=true;
  if(action==='copy-image'){const img=$('image');if(img.src.startsWith('data:'))copyImageData(img.src,{action:'copy-image'});else send('copy-image');return;}
@@ -311,8 +324,18 @@ window.addEventListener('message',e=>{const m=e.data;if(!m||!m.kind)return;
   $('diagCards').innerHTML=[['Battery',d.battery!=null?d.battery+'%':'—',[d.charging?'Charging':'On battery',d.temperature!=null?d.temperature+' °C':''].filter(Boolean).join(' · ')],['Memory',d.memUsed!=null?d.memUsed+' / '+d.memTotal+' GB':'—',d.memPct!=null?d.memPct+'% used':''],['Storage',d.storageFree||'—',d.storageTotal?'free of '+d.storageTotal:''],['Display',d.width?d.width+' × '+d.height:'—',d.density?d.density+' dpi':'']]
    .map(c=>'<div class="card card-pad stat"><span class="small muted">'+c[0]+'</span><span class="v">'+h(c[1])+'</span><span class="small muted">'+h(c[2])+'</span></div>').join('');
   $('diagKv').innerHTML=[['Model',d.model],['Build',d.build],['Security patch',d.patch],['ABI',d.abi],['Managed by MoTA',d.managed?'Yes':'No']].filter(r=>r[1]!==undefined&&r[1]!=='').map(r=>'<dt>'+h(r[0])+'</dt><dd>'+h(r[1])+'</dd>').join('');}
+ else if(m.kind==='pressure'){const parts=[m.fill,m.load].filter(Boolean);
+  $('pressBanner').style.display=m.active?'flex':'none';$('pressBannerText').textContent='Artificial pressure is on: '+parts.join(' · ');
+  $('pressSummary').textContent=m.active?'Artificial pressure is on this phone. Stop it when the test is done: it makes installs and other tests fail.':'No artificial pressure on this phone.';
+  $('pressStorage').textContent=m.fill||(m.free?m.free+' free of '+m.total+', no fill':'Storage could not be read');
+  $('pressLoad').textContent=m.hasLoadApps?(m.load||'No load apps running'):'Load apps are not part of this build';
+  document.querySelectorAll('[data-press]').forEach(x=>x.disabled=false);
+  $('pressClear').disabled=!m.fill;$('pressStopLoad').disabled=!m.load;document.querySelectorAll('[data-press=stop-all]').forEach(x=>x.disabled=!m.active);document.querySelector('[data-press=load]').disabled=!m.hasLoadApps;
+  $('pressDetail').hidden=!m.detail;$('pressDetail').textContent=m.detail||'';
+  if(m.error)toast(m.error,true);else if(m.note)toast(m.note);}
  else if(m.kind==='files'){if(m.path!==cwd)return;if(m.error){$('files').innerHTML='<tr><td colspan="3" style="color:var(--vscode-errorForeground)">'+h(m.error)+'</td></tr>';return;}
   $('files').innerHTML=m.entries.length?m.entries.map(f=>{const full=(cwd==='/'?'':cwd.replace(/\\/+$/,''))+'/'+f.name;return '<tr data-path="'+h(full)+'"><td><button '+(f.dir?'data-dir':'data-file')+'="'+h(full)+'">'+icon(f.dir?'folder':'file')+h(f.name)+'</button></td><td class="muted">'+(f.dir?'—':fmtSize(f.size))+'</td><td class="muted">'+h(f.modified)+'</td></tr>';}).join(''):'<tr><td colspan="3" class="muted">This folder is empty.</td></tr>';}
 });
-function start(){const s=(()=>{try{return api.getState()||{};}catch{return{};}})();send('ready');send('info');send('packages');send('captures');liveStart();if(s.tab&&s.tab!=='apps')showTab(s.tab);}
+setInterval(()=>{if(!document.hidden&&!document.querySelector('[data-press=refresh]').disabled)send('pressure');},15000);
+function start(){const s=(()=>{try{return api.getState()||{};}catch{return{};}})();send('ready');send('info');send('packages');send('captures');send('pressure');liveStart();if(s.tab&&s.tab!=='apps')showTab(s.tab);}
 `;

@@ -11,6 +11,7 @@ import { discoverFlows, parseFlowHeader } from '../maestro/flows';
 import { describeCommand, latestFlowDir } from '../maestro/results';
 import { MAESTRO_DRIVER, type MaestroRunner, type TestRun } from '../maestro/runner';
 import type { LeaseGate } from '../leases';
+import { describeStopped, stopAllPressure, tryLoadMeta as loadMetaOrNone } from '../pressureControl';
 import { describeLoad, loadStatus, loadSummary, planScenario, parseMemory, readLoadMeta, SCENARIOS, startLoad, stopLoad } from '../loadApps';
 import { MOTA_TOOL_RISK, targetSerials } from './policy';
 import { downscalePng } from './png';
@@ -314,7 +315,7 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
         await stopLoad(adb, s, meta);
         const plan = planScenario(scenario, parseMemory(await adb.shell(s, ['cat', '/proc/meminfo'])), meta.count, { apps, memoryMbEach, leaveAvailableMb });
         let installed: string[] = [];
-        const status = await startLoad(adb, s, deps.loadAppsDir!(), plan, { owner: (await deps.lease?.holder())?.label, scenario, installed: list => { installed = list; } });
+        const status = await startLoad(adb, s, deps.loadAppsDir!(), plan, { owner: (await deps.lease?.holder())?.label, scenario, installed: list => { installed = list; }, ...(scenario === 'squeeze' ? { untilAvailableKb: (leaveAvailableMb ?? 300) * 1024 } : {}) });
         return text(`${installed.length ? `Installed ${installed.length} load app(s). ` : ''}${describeLoad(status)}`);
       })),
     tool('load_apps_status', 'Which load apps are still running and why the others ended (killed for low memory, and so on), with the memory now available. Give package to also see whether the app under test is running and why its last process ended.',
@@ -322,6 +323,11 @@ export function motaTools(tool: typeof Sdk.tool, deps: ToolDeps) {
     tool('stop_load_apps', 'Stop all load apps on a phone and delete what they stored. They stay installed for the next start.', { serial }, safely(async ({ serial: s }) => {
       const running = await stopLoad(adb, s, loadMeta());
       return text(running ? `Stopped ${running} load app(s).` : 'No load apps were running.');
+    })),
+
+    tool('stop_pressure', 'End all artificial pressure on a phone at once: removes the storage fill and stops every load app, whoever started them. Use it when a pressure test is done or a phone was left full or busy.', { serial }, safely(async ({ serial: s }) => {
+      const text0 = describeStopped(await stopAllPressure(adb, s, loadMetaOrNone(deps.loadAppsDir?.())));
+      return text(`${s}: ${text0}.`);
     })),
 
     tool('clear_app_data', 'Delete all data of an app on a device (logs the user out, resets it).', { serial, package: pkg, reason, taskId }, safely(async ({ serial: s, package: p }) => text(await adb.shell(s, ['pm', 'clear', p]))), destructive),

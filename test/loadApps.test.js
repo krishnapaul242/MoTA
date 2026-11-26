@@ -14,7 +14,7 @@ function phone({installed = [], killed = [], installError = '', exits = {}} = {}
   const p = {installed: new Set(installed), running: new Map(), calls: [], installs: [], record: '', sets: []};
   const sh = async script => {
     p.calls.push(script);
-    if (script.startsWith('pm list packages')) return [...p.installed].map(x => `package:${x} versionCode:1`).join('\n');
+    if (script.startsWith('pm list packages')) return [...p.installed].map(x => `package:${x} versionCode:${L.readLoadMeta(DIR).versionCode}`).join('\n');
     if (script.startsWith('date')) return '2026-11-26 16:30:00';
     if (script.startsWith('echo ') && script.includes('mota-load.json')) { p.record = /^echo '(.*)' > /s.exec(script)[1]; return ''; }
     if (script.startsWith('cat /proc/meminfo')) return 'MemTotal: 4194304 kB\nMemAvailable: 2097152 kB';
@@ -70,8 +70,9 @@ test('scenarios are sized to the phone, and options override the size and number
   assert.equal(busy.length, 3);
   assert.ok(busy.every(a => a.state === 'service' && a.respawn && a.cpuPercent === 30 && a.ioMbps === 5));
   const squeeze = L.planScenario('squeeze', small, 12, {leaveAvailableMb: 124});
-  assert.equal(squeeze.length, 6);
-  assert.equal(squeeze.reduce((n, a) => n + a.memMb, 0), 864, 'takes what is available minus what to leave, in 16 MB steps');
+  assert.equal(squeeze.length, 4, 'apps of about 256 MB');
+  assert.equal(squeeze.reduce((n, a) => n + a.memMb, 0), 896, 'takes what is available minus what to leave, in 16 MB steps');
+  assert.equal(L.planScenario('squeeze', big, 12).length, 12, 'never more apps than exist');
   assert.ok(squeeze.every(a => a.randomPercent === 100 && a.respawn));
   assert.equal(L.planScenario('open-apps', small, 12, {apps: 50}).length, 12, 'no more apps than exist');
   assert.equal(L.planScenario('open-apps', small, 12, {apps: 2, memoryMbEach: 300})[1].memMb, 300);
@@ -123,7 +124,7 @@ test('starting installs only the missing apps, opens recent apps on screen first
     '  dev.mota.load.a03 · 64 MB, comes back · running (background work)',
     'Memory: 512 MB available of 4096 MB.',
   ].join('\n'));
-  assert.deepEqual(await L.loadSummary(p.adb, 'A', L.readLoadMeta(DIR)), {text: 'load apps: 3 of 3 running by claude · ~/app', owner: 'claude · ~/app'});
+  assert.deepEqual(await L.loadSummary(p.adb, 'A', L.readLoadMeta(DIR)), {text: 'load apps: 3 of 3 running by claude · ~/app', owner: 'claude · ~/app', running: 3, total: 3, scenario: 'open-apps'});
 });
 
 test('a load app Android kills is reported with the reason, and so is the app under test', async () => {
@@ -151,7 +152,7 @@ test('stopping clears every installed load app and the record, and says how many
   await L.startLoad(p.adb, 'A', DIR, [{memMb: 96, state: 'cached'}, {memMb: 96, state: 'cached'}], {wait});
   assert.equal(await L.stopLoad(p.adb, 'A', meta), 2);
   assert.equal(p.running.size, 0);
-  assert.deepEqual(await L.loadSummary(p.adb, 'A', meta), {text: '', owner: ''});
+  assert.equal((await L.loadSummary(p.adb, 'A', meta)).text, '');
   assert.equal(L.describeLoad(await L.loadStatus(p.adb, 'A', meta)).split('\n')[0], 'No load apps are running on this phone.');
   assert.equal(await L.stopLoad(phone().adb, 'A', meta), 0);
 });
