@@ -6,3 +6,4 @@ out/
 site/
 dist/
 releases/
+.DS_Store
