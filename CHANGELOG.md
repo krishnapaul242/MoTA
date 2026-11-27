@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 - Pressure is visible and stoppable everywhere: the device farm shows a chip on each phone under pressure and a bar with **Stop all pressure**; the device controls page shows a banner and a **Pressure** card to fill storage and run load apps; **MoTA: Stop All Pressure (Free Storage and Memory)** and the `stop_pressure` tool end it in one step.
 - Load apps for real multi-app pressure: `start_load_apps` runs up to 12 small stand-in apps that hold memory and can use CPU and disk, in scenarios sized to the phone's memory (`open-apps`, `heavy-app`, `busy-background`, `squeeze`). `load_apps_status` shows which ones Android killed and why, also for the app under test, and `stop_load_apps` ends it.
 - Storage and memory pressure for Claude and MCP agents: `fill_storage` leaves a phone with little or no free storage and `clear_storage_fill` undoes it; `trim_memory` sends an app a low-memory signal; `kill_background_app` kills an app in the background as Android does when memory is low, then reopens it. `list_devices` shows a fill and who made it, and `release_device` removes the session's own fill.

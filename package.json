@@ -2,7 +2,7 @@
   "name": "mota-android",
   "displayName": "MoTA Android",
   "description": "Android device controls, screenshots, video capture, recording and replay, APK installs and diagnostics.",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "publisher": "krishna-paul-india-sde",
   "icon": "resources/icon.png",
   "engines": {
